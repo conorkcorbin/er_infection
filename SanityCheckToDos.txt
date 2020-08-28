@@ -1,0 +1,214 @@
+Sanity Check TODOS and Concerns: Running list of conerns that need to be addressed as this project develops. 
+
+How many extra er_stays would be included if I looked at cancelled culture orders - that is how many times are culture orders (that are cancelled) ordered within 4 hours AND abx are ordered within that timewindow as well?  
+    AND FOLLOW UP - how worried about selection bias should I be here?
+    
+Related: There's a large number ~40,000 ER encounters where the order_start_time_utc column in order_med shows that abx are ordered within 4 hours of ED stay, yet included microbial cultures (that are in lab_results) are not ordered within 4 hours.  This may be due to cultures being cancelled - because these do not appear in lab_results and thus our sql query doesn't pick them up.  But also after a quick initial inspection using the query below we see that many times there are indeed cultures ordered, but hours after the order_start_time of the antibiotics.  Its not quite clear why this would happen. 
+
+WITH abx_no_cults AS (
+SELECT cult.pat_enc_csn_id_coded cult_csn, med.*
+FROM `mining-clinical-decisions.conor_db.abx_med_orders_last_4_hours`  med
+LEFT JOIN `mining-clinical-decisions.conor_db.abx_culture_orders_within_4_hours` cult 
+USING (pat_enc_csn_id_coded)
+WHERE cult.pat_enc_csn_id_coded IS NULL)
+
+SELECT abx.*, op.description, op.order_status, op.order_time_jittered_utc
+FROM abx_no_cults abx
+LEFT JOIN `shc_core.order_proc` op
+USING (anon_id)
+WHERE TIMESTAMP_DIFF(abx.order_start_time_utc, op.order_time_jittered_utc, HOUR) BETWEEN -4 AND 4 
+AND op.order_type LIKE "Microbiology%"
+ORDER BY anon_id, order_start_time_utc, order_time_jittered_utc
+
+Similarily, there are 57155 ER encounters where we see a culture order (in our included set of cultures) within 4 hours but no abx order. This can be either b/c no abx were actually ordered for the patient at this visit, or the abx were ordered AFTER the 4 hour mark, or abx that were not in our "included set" were ordered. Below query shows other kinds of antibiotics that were ordered with a 4 hour span before and after the culture order_time.  
+
+WITH cults_no_abx AS (
+SELECT med.pat_enc_csn_id_coded med_csn, cult.*
+FROM `mining-clinical-decisions.conor_db.abx_med_orders_last_4_hours`  med
+RIGHT JOIN `mining-clinical-decisions.conor_db.abx_culture_orders_within_4_hours` cult 
+USING (pat_enc_csn_id_coded)
+WHERE med.pat_enc_csn_id_coded IS NULL)
+
+SELECT cult.*, om.med_description, om.order_status, om.order_start_time_utc, abx.is_include_abx 
+FROM cults_no_abx cult
+LEFT JOIN `shc_core.order_med` om
+USING (anon_id)
+INNER JOIN `mining-clinical-decisions.conor_db.abx_include` abx
+USING (med_description)
+WHERE TIMESTAMP_DIFF(cult.order_time_jittered_utc, om.order_start_time_utc, HOUR) BETWEEN -4 AND 4 
+ORDER BY anon_id, order_time_jittered_utc, order_start_time_utc
+
+How often are other kinds of cultures ordered AFTER the 4 hour window that would CHANGE the label of the patient encounter had those cultures been included?
+
+Why are there still ~1000 encounters with culture orders that are NOT cancelled yet still don't appear in lab_results. Do these 1000 appear in culture_sensitivity?
+SELECT order_status, COUNT (DISTINCT pat_enc_csn_id_coded) num_encounters_with_missing_order
+FROM `mining-clinical-decisions.conor_db.micro_missing_orders` 
+WHERE order_proc_id_coded = missing_order_id
+GROUP BY order_status 
+
+Why are there 2897 cultures that appear in culture_sensitivity but not order_proc?
+SELECT COUNT (DISTINCT cs.order_proc_id_coded)
+FROM `shc_core.culture_sensitivity` cs
+LEFT JOIN `shc_core.order_proc` op
+USING (order_proc_id_coded)
+WHERE op.anon_id IS NULL
+
+^Maybe try joining on time to see if the orders have different order_ids. 
+
+Also Note there are 17371 cultures that appear in culture_sensitivity but not order_proc in our starr_datalake2018 dataset...
+SELECT COUNT (DISTINCT cs.order_proc_id_coded)
+FROM `starr_datalake2018.culture_sensitivity` cs
+LEFT JOIN `starr_datalake2018.order_proc` op
+USING (order_proc_id_coded)
+WHERE op.jc_uid IS NULL
+
+Why does the order_med table not have an order_time_jittered_utc field like it did in the starr_datalake2018 extract?  I've using order_start_time_utc as a proxy for order time now, but this is not quite the same thing - it's the time that the med SHOULD be started, not when it was ordered. 
+
+Should we create a optional_include set of cultures (for instance fungal or viral cultures) that are okay to have been ordered for our cohort? 
+
+Having a set of exclude cultures could bias our predictions.  We want to deliver predictions at abx order time. This order_time could be before the order for an exclude culture, and during deployment we thus would not be able to exclude these encounters. See how often exclude cultures are ordered after order for abx. 
+
+How many times are microbial cultures ordered within the SAME time window as the admission and discharge timestamp of the ER CSN but have a different CSN?  Similarily, how often does this happen for abx orders?  
+
+** Cultures: This happens for 816/117891 unique csn's that we pick up in the er_admits query.  But we pick them up by joining to order_proc via anon_id.  Should look into more to see if this is coding error or due to time overlaps in csns. 
+
+** Meds: Similarily - there are 2877/111046 CSN's where antibiotics are listed in order_med under a different CSN for the same patient 
+
+The med_route column in order_med seems to not be compatable with the med descriptions of various antibiotics. Med_routes listed as Intramusuclar for instance will have IV in the med description.  INJ is ambigious between IV and IM. 
+
+
+Some abx orders in order_med have order_status = "Completed" but have nothing in the MAR suggesting it was actually administered.  Worth trying to figure out how often this happens and why... maybe that "completed" here refers to orders being completed, not the administration being completed.  There's a seperate mar_action value called "completed" that would suggest the administration was completed. 
+
+
+What is the difference beteween order_end_time_utc and discon_time_jittered_utc in order_med and why does order_end_time_utc seem to occur befor discon_time_jittered_utc so frequently? 
+
+
+Want to define discontinued time for antibiotics.  In the order_med table there is a column called discon_time_jittered_utc - but it is not consistently populated.  When antibiotics are GIVEN to a patient, we can either use the discontinued time if it exists, or the last timestamp available associated with a mar action for that order.  I believe this would work better for inpatient meds, bc every time a dose is given you see a given mar action.  But if a patient is sent home with abx pills, you see the given flag once, yet they're probably taking the abx for about a week. When abx are not given, sometimes there is a discontinued timestamp - which can be days after the order_start_time.  sometimes this column is null, in which case i might just use the order_start_time timestamp as the discontinued time. 
+
+    By this logic, abx_stop_time for patients sent home with abx pills will be the timestamp of last mar action, and not when they actually stop taking their pills. Means
+    lot of patients who go home and culture results come back negative will be labelled as not-infected. 
+    
+
+Write test code to sanity check abx_med_orders_given_and_stopped_info table.
+
+Below SQL shows distribution of abx administration lengths in hours for various ED encounters. 
+
+Sanity check to make sure that our non_infected csns don't have any positive cultures that were ordered between 0 and 4 hours post er admit.  Returns no results
+
+WITH er_admits AS (
+SELECT anon_id, pat_enc_csn_id_coded, min(effective_time_jittered_utc) as er_admit_time, max(effective_time_jittered_utc) as er_transfer_out_time
+FROM `shc_core.adt`
+WHERE pat_class_c = "112" AND pat_service = "Emergency"
+GROUP BY anon_id, pat_enc_csn_id_coded)
+
+SELECT ea.anon_id, ea.pat_enc_csn_id_coded, cs.organism
+FROM er_admits ea
+INNER JOIN `mining-clinical-decisions.conor_db.abx_not_infected_csns` ninf
+USING (pat_enc_csn_id_coded)
+RIGHT JOIN `shc_core.culture_sensitivity` cs
+USING (anon_id)
+WHERE TIMESTAMP_DIFF(cs.order_time_jittered_utc, ea.er_admit_time, HOUR) BETWEEN 0 AND 4
+ORDER BY anon_id, pat_enc_csn_id_coded
+
+Now similarily, see if any of these csn's have cultures ordered anytime in the first 2 weeks since ER admit. Of the 15k csn's I've called not_infected, 453 have positive cultures within 14 days after er_admit
+where the culture was ordered after the first 4 hours of the ER stay.
+
+WITH er_admits AS (
+SELECT anon_id, pat_enc_csn_id_coded, min(effective_time_jittered_utc) as er_admit_time, max(effective_time_jittered_utc) as er_transfer_out_time
+FROM `shc_core.adt`
+WHERE pat_class_c = "112" AND pat_service = "Emergency"
+GROUP BY anon_id, pat_enc_csn_id_coded)
+
+SELECT DISTINCT ea.anon_id, ea.pat_enc_csn_id_coded, cs.organism, ea.er_admit_time, cs.order_time_jittered_utc, cs.result_time_jittered_utc
+FROM er_admits ea
+INNER JOIN `mining-clinical-decisions.conor_db.abx_not_infected_csns` ninf
+USING (pat_enc_csn_id_coded)
+RIGHT JOIN `shc_core.culture_sensitivity` cs
+USING (anon_id)
+WHERE TIMESTAMP_DIFF(cs.order_time_jittered_utc, ea.er_admit_time, DAY) BETWEEN 0 AND 14
+ORDER BY anon_id, pat_enc_csn_id_coded
+
+Merge the above with our abx_start_stop_info to confirm no abx given. 
+WITH er_admits AS (
+SELECT anon_id, pat_enc_csn_id_coded, min(effective_time_jittered_utc) as er_admit_time, max(effective_time_jittered_utc) as er_transfer_out_time
+FROM `shc_core.adt`
+WHERE pat_class_c = "112" AND pat_service = "Emergency"
+GROUP BY anon_id, pat_enc_csn_id_coded),
+
+other_pos_cults AS (
+SELECT DISTINCT ea.anon_id, ea.pat_enc_csn_id_coded, cs.organism, ea.er_admit_time, cs.order_time_jittered_utc, cs.result_time_jittered_utc
+FROM er_admits ea
+INNER JOIN `mining-clinical-decisions.conor_db.abx_not_infected_csns` ninf
+USING (pat_enc_csn_id_coded)
+RIGHT JOIN `shc_core.culture_sensitivity` cs
+USING (anon_id)
+WHERE TIMESTAMP_DIFF(cs.order_time_jittered_utc, ea.er_admit_time, DAY) BETWEEN 0 AND 14
+)
+
+SELECT ao.*, opc.organism, opc.order_time_jittered_utc, opc.result_time_jittered_utc
+FROM `mining-clinical-decisions.conor_db.abx_temp_14_day_orders` ao
+INNER JOIN other_pos_cults opc
+USING (pat_enc_csn_id_coded)
+ORDER BY anon_id, pat_enc_csn_id_coded, order_start_time_utc, opc.order_time_jittered_utc
+
+Kinds of Cultures that grow positive from this set above. 
+
+WITH er_admits AS (
+SELECT anon_id, pat_enc_csn_id_coded, min(effective_time_jittered_utc) as er_admit_time, max(effective_time_jittered_utc) as er_transfer_out_time
+FROM `shc_core.adt`
+WHERE pat_class_c = "112" AND pat_service = "Emergency"
+GROUP BY anon_id, pat_enc_csn_id_coded)
+
+SELECT description, COUNT (DISTINCT pat_enc_csn_id_coded ) cnt
+FROM
+  (SELECT DISTINCT ea.anon_id, ea.pat_enc_csn_id_coded, cs.organism, ea.er_admit_time, cs.order_time_jittered_utc, cs.result_time_jittered_utc, cs.description,
+  TIMESTAMP_DIFF(cs.order_time_jittered_utc, ea.er_admit_time, HOUR) hours_since_er_admit
+  FROM er_admits ea
+  INNER JOIN `mining-clinical-decisions.conor_db.abx_not_infected_csns` ninf
+  USING (pat_enc_csn_id_coded)
+  RIGHT JOIN `shc_core.culture_sensitivity` cs
+  USING (anon_id)
+  WHERE TIMESTAMP_DIFF(cs.order_time_jittered_utc, ea.er_admit_time, DAY) BETWEEN 0 AND 14
+  ORDER BY anon_id, pat_enc_csn_id_coded) t
+GROUP BY description
+ORDER BY cnt
+
+Distribution of time since er_admit_time of the positive cultures.  Note none will be between 0 and 4 hours from er admit time bc we capture those.  Some are before, which we can filter by imposing another
+constraint on cohort to make sure person doesn't have any er/hospital encounters within previous 14 days. 
+
+WITH er_admits AS (
+SELECT anon_id, pat_enc_csn_id_coded, min(effective_time_jittered_utc) as er_admit_time, max(effective_time_jittered_utc) as er_transfer_out_time
+FROM `shc_core.adt`
+WHERE pat_class_c = "112" AND pat_service = "Emergency"
+GROUP BY anon_id, pat_enc_csn_id_coded)
+
+SELECT hours_since_er_admit, COUNT (DISTINCT pat_enc_csn_id_coded )
+FROM
+  (SELECT DISTINCT ea.anon_id, ea.pat_enc_csn_id_coded, cs.organism, ea.er_admit_time, cs.order_time_jittered_utc, cs.result_time_jittered_utc,
+  TIMESTAMP_DIFF(cs.order_time_jittered_utc, ea.er_admit_time, HOUR) hours_since_er_admit
+  FROM er_admits ea
+  INNER JOIN `mining-clinical-decisions.conor_db.abx_not_infected_csns` ninf
+  USING (pat_enc_csn_id_coded)
+  RIGHT JOIN `shc_core.culture_sensitivity` cs
+  USING (anon_id)
+  WHERE TIMESTAMP_DIFF(cs.order_time_jittered_utc, ea.er_admit_time, DAY) BETWEEN 0 AND 14
+  ORDER BY anon_id, pat_enc_csn_id_coded) t
+GROUP BY hours_since_er_admit
+ORDER BY hours_since_er_admit 
+
+
+Make sure to code Coag Negative Staph as a negative culture
+This should be taken care of now
+
+Age distribution -- though we noted that many of the ER deps were listed as Pediatric ER dep for positive culture patients - so look further into distribution of infected/not infected when we remove <18.  Distribution stays roughly the same after you remove kids. Actually not_infected label has most taken from it. 
+SELECT DATE_DIFF(CAST(cens.index_time as DATE), demo.BIRTH_DATE_JITTERED, YEAR) age, COUNT (DISTINCT pat_enc_csn_id_coded) cnt
+FROM `mining-clinical-decisions.conor_db.abx_cohort_not_censored_label` cens
+INNER JOIN `shc_core.demographic` demo
+USING (anon_id)
+GROUP BY age
+ORDER BY age
+
+
+Make sure I'm not counting people who die as people who were not infected. 
+
+If candida is the only growth, consider as negative culture patient (abx not relevant)
