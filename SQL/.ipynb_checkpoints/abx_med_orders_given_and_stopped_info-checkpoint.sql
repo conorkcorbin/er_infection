@@ -39,11 +39,16 @@ LEFT JOIN `mining-clinical-decisions.conor_db.abx_mar_actions_was_given_flag` wg
 USING (action_list))
 
 SELECT DISTINCT owi.*, om.discon_time_jittered_utc,
+-- When no mar actions listed for order than infer wasn't given and abx stop time will be order time
 CASE WHEN was_given = 0 AND action_list IS NULL AND om.discon_time_jittered_utc IS NULL THEN owi.order_start_time_utc
+-- If not in mar actions but discontinued time listed in order_med then abx stop time is discontinued time
 WHEN was_given = 0 AND action_list IS NULL THEN om.discon_time_jittered_utc 
+-- If in mar but nothing to infer was actually given, then take last known timestamp as stop time. 
 WHEN was_given = 0 AND last_mar_action_time > discon_time_jittered_utc THEN last_mar_action_time
 WHEN was_given = 0 AND last_mar_action_time < discon_time_jittered_utc THEN discon_time_jittered_utc
+-- If in mar and was given but not discontinued time listed in order_med, then take timestamp of last mar action
 WHEN was_given = 1 AND discon_time_jittered_utc IS NULL THEN last_mar_action_time
+-- If in mar and was given and there exists a discontinued time, then take latest timestamp between that and last mar action
 WHEN was_given = 1 AND last_mar_action_time > discon_time_jittered_utc THEN last_mar_action_time
 WHEN was_given = 1 AND last_mar_action_time < discon_time_jittered_utc THEN discon_time_jittered_utc END abx_stop_time
 FROM orders_with_info owi

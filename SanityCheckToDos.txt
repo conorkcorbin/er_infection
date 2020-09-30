@@ -1,5 +1,7 @@
 Sanity Check TODOS and Concerns: Running list of conerns that need to be addressed as this project develops. 
 
+If we only have patients with inpatient codes, we'll have selection bias if it isn't known whether we'll admit the patient.  This probably isn't such a huge issue for inpatient vs discharge from ER but might be an issue for people who go into observation. Might want to include observation in cohort. 
+
 How many extra er_stays would be included if I looked at cancelled culture orders - that is how many times are culture orders (that are cancelled) ordered within 4 hours AND abx are ordered within that timewindow as well?  
     AND FOLLOW UP - how worried about selection bias should I be here?
     
