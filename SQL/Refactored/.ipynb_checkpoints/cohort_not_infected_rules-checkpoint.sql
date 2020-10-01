@@ -80,21 +80,16 @@ WHERE was_given = 1
 GROUP BY anon_id, pat_enc_csn_id_coded
 ),
 
--- Gets CSN's where all abx ordered within 2 weeks were either not started or were stopped within a day of culture results returning
+-- Gets CSN's where all abx ordered within 2 weeks were either not started or were stopped within a 2 days of er admit time. 
 started_abx_stopped_within_day_after_cult_results_or_not_started AS (
 SELECT DISTINCT fe.pat_enc_csn_id_coded
 FROM filtered_examples fe
 LEFT JOIN last_abx_stop_time_if_started las
 USING (pat_enc_csn_id_coded)
-LEFT JOIN (
-   SELECT our_cults.pat_enc_csn_id_coded, max(op.result_time_jittered_utc) max_result_time # day of last result
-   FROM `mining-clinical-decisions.abx.culture_orders_within_24_hrs` our_cults
-   LEFT JOIN `shc_core.order_proc` op
-   USING (order_proc_id_coded)
-   GROUP BY pat_enc_csn_id_coded) results
+LEFT JOIN er_admits ea
 USING (pat_enc_csn_id_coded)
 WHERE las.abx_stop_time IS NULL -- its null for csn's where abx were never started
-OR las.abx_stop_time <= TIMESTAMP_ADD (results.max_result_time, INTERVAL 24 HOUR) -- abx that were started must be stopped 1 day after last culture result time
+OR las.abx_stop_time <= TIMESTAMP_ADD (ea.er_admit_time, INTERVAL 48 HOUR) -- abx that were started must be stopped 1 day after last culture result time
 ),
 
 -- Gets CSNS where we say patients were discharge with oral abx defined as there exists an order for oral abx within the interval
@@ -138,7 +133,9 @@ INNER JOIN `shc_core.culture_sensitivity` cs
 USING (order_proc_id_coded)
 WHERE culture_types.affects_not_infected_label = 1 
 AND TIMESTAMP_DIFF(op.order_time_jittered_utc, ea.er_admit_time, HOUR) BETWEEN 0 AND 14*24
-AND cs.organism <> "COAG NEGATIVE STAPHYLOCOCCUS"
+AND cs.organism <> "COAG NEGATIVE STAPHYLOCOCCUS" 
+AND cs.organism NOT LIKE "%CANDIDA%" 
+AND cs.organism NOT IN ('HAEMOPHILUS INFLUENZAE', 'HAEMOPHILUS PARAINFLUENZAE')
 ),
 
 -- Finds positive cultures from include list of cultures that were
