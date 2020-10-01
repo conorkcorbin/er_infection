@@ -6,7 +6,8 @@
 -- flowsheets
 -- demographic
 
-
+CREATE OR REPLACE TABLE `mining-clinical-decisions.abx.feature_timeline_long` AS
+(
 -- Get order proc feautres from previous year
 SELECT DISTINCT labels.anon_id, labels.pat_enc_csn_id_coded, labels.index_time, lab.order_proc_id_coded as order_id, lab.order_type feature_type, lab.description features, NULL as value1, NULL as value2, lab.order_time_jittered_utc observation_time
 FROM `mining-clinical-decisions.abx.interm_cohort_with_no_inf_rules` as labels
@@ -129,3 +130,4 @@ LEFT JOIN `shc_core.demographic` demo
 ON labels.anon_id = demo.ANON_ID
 
 ORDER BY pat_enc_csn_id_coded, observation_time
+)
