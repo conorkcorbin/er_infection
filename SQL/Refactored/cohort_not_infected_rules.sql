@@ -200,7 +200,7 @@ OR icd10 LIKE "N39.0%" -- Urinary tract infection, site not specified
 OR icd10 LIKE "J06%" -- Acute upper respiratory infections of multiple and unspecified sites
 OR icd10 LIKE "A49%" -- Bacterial infection of unspecified site
 OR icd10 LIKE "J22%" -- Unspecified acute lower respiratory infection
-OR icd10 LIKE "R65.2" -- Severe sepsis (with and without septic shock)
+OR icd10 LIKE "R65.2%" -- Severe sepsis (with and without septic shock)
 )
 
 SELECT fe.*,
