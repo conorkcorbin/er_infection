@@ -140,8 +140,8 @@ def lightgbm(X_train, y_train, X_valid, y_valid):
     6. Return model, best hyperparams, yhats
     """
 
-    grid = {'learning_rate' : [0.01, 0.05, 0.1, 0.5],
-            'num_leaves' : [2, 8, 16, 32, 64]
+    grid = {'learning_rate' : [0.01, 0.05], #,0.05, 0.1, 0.5],
+            'num_leaves' : [2]#, 16, 32, 64]
     }
     cv = StratifiedKFold(n_splits=5, random_state=42)
 
@@ -154,7 +154,7 @@ def lightgbm(X_train, y_train, X_valid, y_valid):
     
     for train_inds, val_inds in cv.split(X_train, y_train):
         # Get train, val, test for each fold.  Use 5% of train inds for early stopping
-        e_stopping = np.ceil(len(train_inds) * 0.95)
+        e_stopping = int(len(train_inds) * 0.95)
         x_tr, x_v, = X_train[train_inds[:e_stopping]], X_train[train_inds[e_stopping:]]
         y_tr, y_v =  y_train[train_inds[:e_stopping]], y_train[train_inds[e_stopping:]]
         x_test, y_test = X_train[val_inds], y_train[val_inds]
@@ -162,7 +162,7 @@ def lightgbm(X_train, y_train, X_valid, y_valid):
         for lr in grid['learning_rate']:
             aucs[lr] = {}
             for num_leaves in grid['num_leaves']:
-                aucs[lr][]
+                aucs[lr][num_leaves] = []
                 # Create GBM model 
                 gbm = lgb.LGBMClassifier(objective='binary',
                                          n_estimators=1000,
@@ -176,10 +176,14 @@ def lightgbm(X_train, y_train, X_valid, y_valid):
                         eval_set= [(x_v, y_v)],
                         eval_metric = 'binary',
                         early_stopping_rounds = 10,
-                        verbose=True
+                        verbose=False
                 )
 
                 y_predict = gbm.predict_proba(x_test)[:,1]
+                fold_auc = roc_auc_score(y_test, y_predict)
+                print("Learning Rate:{lr} Num Leaves:{num_leaves} Fold AUROC:{roc}".format(lr=lr,
+                                                                                           num_leaves=num_leaves,
+                                                                                           roc=fold_auc))
                 aucs[lr][num_leaves].append(roc_auc_score(y_test, y_predict))
     
     # Get Best Hyperparameters
@@ -191,10 +195,15 @@ def lightgbm(X_train, y_train, X_valid, y_valid):
             if aucs[lr][l] > best_auc:
                 best_auc = aucs[lr][l]
                 best_params = {'learning_rate' : lr, 'num_leaves' : lr}
+    print("Optimal Params")
+    print(best_params)
+    print("Best cross validated auroc")
+    print(best_auc)
 
+    print("Retraining on full training set...")
     # Fit on full training set
-    inds = np.random.shuffle([i for i in range(len(X_train))])
-    e_s = np.ceil(len(inds) * 0.95))
+    inds = np.random.shuffle([i for i in range(len(y_train))])
+    e_s = np.ceil(len(inds) * 0.95)
     x_tr, x_val = X_train[inds[:e_s]], X_train[inds[e_s:]]
     y_tr, y_val = y_train[inds[:e_s]], y_train[inds[e_s:]]
     gbm = lgb.LGBMClassifier(objective='binary',
@@ -208,12 +217,13 @@ def lightgbm(X_train, y_train, X_valid, y_valid):
             eval_set = [(x_val, y_val)],
             eval_metric = 'binary',
             early_stopping_rounds = 10,
-            verbose = True
+            verbose = False
     )
 
     best_params['boosting_rounds'] = gbm.best_iteration_ # get num boosting rounds
     y_predict = gbm.predict_proba(X_valid)[:,1]
     auc = roc_auc_score(y_valid, y_predict)
+    print("Val set AUROC:{roc}".format(roc=auc))
 
     return y_predict, auc, best_params
 
@@ -257,6 +267,7 @@ def retrain_from_model(X_train, y_train, X_test, y_test, clf, model):
     return y_predict, roc
 
 def main():
+    import pdb
     parser = argparse.ArgumentParser()
     parser.add_argument('--model_class', default=None, type=str, help='ridge/lasso/lightgbm/random_forest/ffnn')
     parser.add_argument('--data_dir', default="", type=str, help='directory with sparce matrices train val test')
@@ -276,31 +287,27 @@ def main():
 
     TAB = "_validation" if val_flag else "_test"
 
-    if output_path == "":
-        output_path = os.getcwd() + "/" + model + TAB + "_results/"
-    
-    if not os.path.isdir(output_path):
-        os.mkdir(output_path)
+    os.makedirs(output_path, exist_ok=True)
 
     print("Using MODEL: ", model)
     
     print("Loading data...")
     
     if val_flag:
-        X_train = load_npz(os.path.join(args.data_dir, 'training_examples.npz'))
-        y_train = pd.read_csv(os.path.join(args.data_dir, 'training_labels.csv'))
+        X_train = load_npz(os.path.join(args.data_dir, 'training_examples_round_validation.npz'))
+        y_train = pd.read_csv(os.path.join(args.data_dir, 'training_labels_round_validation.csv'))
         y_train = y_train[args.label].values
 
-        X_test = load_npz(os.path.join(args.data_dir, 'validation_examples.npz'))
-        y_test_df = pd.read_csv(os.path.join(args.data_dir, 'validation_labels.csv'))
+        X_test = load_npz(os.path.join(args.data_dir, 'test_examples_round_validation.npz'))
+        y_test_df = pd.read_csv(os.path.join(args.data_dir, 'test_labels_round_validation.csv'))
         y_test = y_test_df[args.label].values
     else:
-        X_train = load_npz(os.path.join(args.data_dir, 'training_and_val_examples.npz'))
-        y_train = pd.read_csv(os.path.join(args.data_dir, 'train_and_val_labels.csv'))
+        X_train = load_npz(os.path.join(args.data_dir, 'training_examples_round_testing.npz'))
+        y_train = pd.read_csv(os.path.join(args.data_dir, 'training_labels_round_testing.csv'))
         y_train = y_train[args.label].values
 
-        X_test = load_npz(os.path.join(args.data_dir, 'test_examples.npz'))
-        y_test_df = pd.read_csv(os.path.join(args.data_dir, 'test_labels.csv'))
+        X_test = load_npz(os.path.join(args.data_dir, 'test_examples_round_testing.npz'))
+        y_test_df = pd.read_csv(os.path.join(args.data_dir, 'test_labels_round_testing.csv'))
         y_test = y_test_df[args.label].values
         
     
