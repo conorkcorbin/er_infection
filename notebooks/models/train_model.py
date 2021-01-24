@@ -26,10 +26,10 @@ def ridge(X_train, y_train, X_valid, y_valid):
         3. Evaluate on Val
         4. Returns Model, hyperparameters, and yhats
     """
-    grid = {'c' : np.logspace(-8, 8, 17)}
+    grid = {'C' : np.logspace(-8, 8, 17)}
     cv = StratifiedKFold(n_splits=5, random_state=42)
     ridge = LogisticRegression(penalty='l2', max_iter= 1000, solver='lbfgs')
-    search = GridSearchCV(ridge, grid, scoring='roc_auc', cv=cv)
+    search = GridSearchCV(ridge, grid, scoring='roc_auc', cv=cv, verbose=2)
     result = search.fit(X_train, y_train)
     
     print("Ridge\n")
@@ -38,13 +38,13 @@ def ridge(X_train, y_train, X_valid, y_valid):
     
     # Fit model with best params on full train set and get score on val set
     ridge = LogisticRegression(**result.best_params_)
-    ridge.fit(X_train, Y_train)
+    ridge.fit(X_train, y_train)
     y_predict = ridge.predict_proba(X_valid)[:, 1]
     auc = roc_auc_score(y_valid, y_predict)
 
     print("Validation Set AUROC: {auc}\n".format(auc=auc))
 
-    return y_predict, auc, results.best_params_
+    return y_predict, auc, result.best_params_
 
 def lasso(X_train, y_train, X_valid, y_valid):
 
@@ -53,10 +53,10 @@ def lasso(X_train, y_train, X_valid, y_valid):
         3. Evaluate on Val
         4. Returns Model, hyperparameters, and yhats
     """
-    grid = {'c' : np.logspace(-8, 8, 17)}
+    grid = {'C' : np.logspace(-8, 8, 17)}
     cv = StratifiedKFold(n_splits=5, random_state=42)
     lasso = LogisticRegression(penalty='l1', max_iter= 1000, solver='liblinear')
-    search = GridSearchCV(lasso, grid, scoring='roc_auc', cv=cv)
+    search = GridSearchCV(lasso, grid, scoring='roc_auc', cv=cv, verbose=2)
     result = search.fit(X_train, y_train)
     
     print("Lasso\n")
@@ -65,13 +65,13 @@ def lasso(X_train, y_train, X_valid, y_valid):
     
     # Fit model with best params on full train set and get score on val set
     lasso = LogisticRegression(**result.best_params_)
-    lasso.fit(X_train, Y_train)
+    lasso.fit(X_train, y_train)
     y_predict = lasso.predict_proba(X_valid)[:, 1]
     auc = roc_auc_score(y_valid, y_predict)
 
     print("Validation Set AUROC: {auc}\n".format(auc=auc))
 
-    return y_predict, auc, results.best_params_
+    return y_predict, auc, result.best_params_
 
 def elastic_net(X_train, y_train, X_valid, y_valid):
     # log_transformer = FunctionTransformer(np.log1p, validate=True)
@@ -99,7 +99,7 @@ def elastic_net(X_train, y_train, X_valid, y_valid):
 
 
 
-def random_forest(X_train, y_train, X_valid, y_valid, logfile):
+def random_forest(X_train, y_train, X_valid, y_valid):
 
     """ 1. Splits train set into k fold for hyperparameter search
         2. Refits on Train
@@ -111,8 +111,8 @@ def random_forest(X_train, y_train, X_valid, y_valid, logfile):
             'max_features' : ['sqrt', 'log2', None]
            }
     cv = StratifiedKFold(n_splits=5, random_state=42)
-    rf = RandomForestClassifer(n_estimators=1000, random_state=42)
-    search = GridSearchCV(rf, grid, scoring='roc_auc', cv=cv)
+    rf = RandomForestClassifier(n_estimators=1000, random_state=42)
+    search = GridSearchCV(rf, grid, scoring='roc_auc', cv=cv, verbose=2)
     result = search.fit(X_train, y_train)
     
     
@@ -121,14 +121,14 @@ def random_forest(X_train, y_train, X_valid, y_valid, logfile):
     print("Best Hyperparameters: %s\n" % result.best_params_)
     
     # Fit model with best params on full train set and get score on val set
-    rf = RandomForestClassifer(**result.best_params_)
-    rf.fit(X_train, Y_train)
+    rf = RandomForestClassifier(**result.best_params_)
+    rf.fit(X_train, y_train)
     y_predict = rf.predict_proba(X_valid)[:, 1]
     auc = roc_auc_score(y_valid, y_predict)
 
     print("Validation Set AUROC: {auc}\n".format(auc=auc))
 
-    return y_predict, auc, results.best_params_
+    return y_predict, auc, result.best_params_
 
 def lightgbm(X_train, y_train, X_valid, y_valid): 
     """ 
@@ -140,8 +140,8 @@ def lightgbm(X_train, y_train, X_valid, y_valid):
     6. Return model, best hyperparams, yhats
     """
 
-    grid = {'learning_rate' : [0.01, 0.05], #,0.05, 0.1, 0.5],
-            'num_leaves' : [2]#, 16, 32, 64]
+    grid = {'learning_rate' : [0.01, 0.05, 0.1, 0.5],
+            'num_leaves' : [2, 8, 16, 32, 64]
     }
     cv = StratifiedKFold(n_splits=5, random_state=42)
 
@@ -152,6 +152,7 @@ def lightgbm(X_train, y_train, X_valid, y_valid):
         for l in grid['num_leaves']:
             aucs[lr][l] = []
     
+    ind=0
     for train_inds, val_inds in cv.split(X_train, y_train):
         # Get train, val, test for each fold.  Use 5% of train inds for early stopping
         e_stopping = int(len(train_inds) * 0.95)
@@ -160,9 +161,7 @@ def lightgbm(X_train, y_train, X_valid, y_valid):
         x_test, y_test = X_train[val_inds], y_train[val_inds]
 
         for lr in grid['learning_rate']:
-            aucs[lr] = {}
             for num_leaves in grid['num_leaves']:
-                aucs[lr][num_leaves] = []
                 # Create GBM model 
                 gbm = lgb.LGBMClassifier(objective='binary',
                                          n_estimators=1000,
@@ -181,11 +180,11 @@ def lightgbm(X_train, y_train, X_valid, y_valid):
 
                 y_predict = gbm.predict_proba(x_test)[:,1]
                 fold_auc = roc_auc_score(y_test, y_predict)
-                print("Learning Rate:{lr} Num Leaves:{num_leaves} Fold AUROC:{roc}".format(lr=lr,
-                                                                                           num_leaves=num_leaves,
-                                                                                           roc=fold_auc))
+                estimators = gbm.best_iteration_
+                out_str = "Learning Rate:{lr} Num Leaves:{num_leaves} Num Estimators:{est} Fold:{ind} AUROC:{roc}"
+                print(out_str.format(lr=lr, num_leaves=num_leaves, est=estimators, ind=ind, roc=fold_auc))  
                 aucs[lr][num_leaves].append(roc_auc_score(y_test, y_predict))
-    
+        ind += 1
     # Get Best Hyperparameters
     best_auc = 0.0
     best_params = {'learning_rate' : None, 'num_leaves' : None}
@@ -194,7 +193,7 @@ def lightgbm(X_train, y_train, X_valid, y_valid):
             aucs[lr][l] = np.mean(aucs[lr][l])
             if aucs[lr][l] > best_auc:
                 best_auc = aucs[lr][l]
-                best_params = {'learning_rate' : lr, 'num_leaves' : lr}
+                best_params = {'learning_rate' : lr, 'num_leaves' : num_leaves}
     print("Optimal Params")
     print(best_params)
     print("Best cross validated auroc")
@@ -202,8 +201,9 @@ def lightgbm(X_train, y_train, X_valid, y_valid):
 
     print("Retraining on full training set...")
     # Fit on full training set
-    inds = np.random.shuffle([i for i in range(len(y_train))])
-    e_s = np.ceil(len(inds) * 0.95)
+    inds = [i for i in range(len(y_train))]
+    np.random.shuffle(inds)
+    e_s = int(len(inds) * 0.95)
     x_tr, x_val = X_train[inds[:e_s]], X_train[inds[e_s:]]
     y_tr, y_val = y_train[inds[:e_s]], y_train[inds[e_s:]]
     gbm = lgb.LGBMClassifier(objective='binary',
@@ -223,7 +223,7 @@ def lightgbm(X_train, y_train, X_valid, y_valid):
     best_params['boosting_rounds'] = gbm.best_iteration_ # get num boosting rounds
     y_predict = gbm.predict_proba(X_valid)[:,1]
     auc = roc_auc_score(y_valid, y_predict)
-    print("Val set AUROC:{roc}".format(roc=auc))
+    print("Num Estimators:{est} Eval set AUROC:{roc}".format(est=gbm.best_iteration_ , roc=auc))
 
     return y_predict, auc, best_params
 
@@ -277,6 +277,19 @@ def main():
     args = parser.parse_args()
     model = args.model_class
 
+    command_str = """python train_model.py --model_class {model_class}
+                                           --data_dir {data_dir}
+                                           --label {label}
+                                           --output_dir {output_dir}
+                                           --val {val}
+                  """
+    command_str = command_str.format(model_class=args.model_class,
+                                     data_dir=args.data_dir,
+                                     label=args.label,
+                                     output_dir=args.output_dir,
+                                     val=args.val == True)
+    print(command_str)
+
     # features = args.feature_types
     output_path = args.output_dir
     val_flag = args.val
@@ -326,17 +339,22 @@ def main():
         print("Model not recognized!")
 
     print("%s AUROC %s: " % (args.model_class, roc))
+    # Write AUROC to file so we can read it in later if this is val
+    if args.val:
+        f_auroc = os.path.join(output_path, 'auroc.txt')
+        with open(f_auroc, 'w') as w:
+            w.write(str(round(roc, 5)))
 
     # Write optimal hyerparameters to file
-    f_params = os.path.join(output_path, model+'_params.txt')
+    f_params = os.path.join(output_path, 'best_params.json')
     with open(f_params, 'w') as w:
-        w.write(clf_opt)
+        json.dump(clf_opt, w) 
 
     ## Save predictions
-    print("Saving predictions to: ", output_path, model, TAB, "_results.csv")
+    print("Saving predictions to: " + output_path + "predictions.csv")
     y_test_df["label"] = y_test
     y_test_df["predictions"] = predict
-    y_test_df.to_csv(output_path+model+TAB+"_results.csv")
+    y_test_df.to_csv(os.path.join(output_path, "predictions.csv"))
 
 
 if __name__ == "__main__":
