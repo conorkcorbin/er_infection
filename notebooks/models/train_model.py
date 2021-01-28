@@ -392,7 +392,7 @@ def main():
     if model in ['ridge', 'lasso']:
         # use coeff parameter and sort by absolute value to get top features
         inds = [i for i in range(len(clf.coef_))]
-        features_imps = [abs(c) for c in clf.coef_]
+        feature_imps = [abs(c) for c in clf.coef_]
     else:
         inds = [i for i in range(len(clf.feature_importances_))]
         feature_imps = clf.feature_importances_
