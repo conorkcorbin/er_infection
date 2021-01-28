@@ -44,7 +44,7 @@ def ridge(X_train, y_train, X_valid, y_valid):
 
     print("Validation Set AUROC: {auc}\n".format(auc=auc))
 
-    return y_predict, auc, result.best_params_
+    return ridge, y_predict, auc, result.best_params_
 
 def lasso(X_train, y_train, X_valid, y_valid):
 
@@ -71,7 +71,7 @@ def lasso(X_train, y_train, X_valid, y_valid):
 
     print("Validation Set AUROC: {auc}\n".format(auc=auc))
 
-    return y_predict, auc, result.best_params_
+    return lasso, y_predict, auc, result.best_params_
 
 def elastic_net(X_train, y_train, X_valid, y_valid):
     # log_transformer = FunctionTransformer(np.log1p, validate=True)
@@ -128,7 +128,7 @@ def random_forest(X_train, y_train, X_valid, y_valid):
 
     print("Validation Set AUROC: {auc}\n".format(auc=auc))
 
-    return y_predict, auc, result.best_params_
+    return rf, y_predict, auc, result.best_params_
 
 def lightgbm(X_train, y_train, X_valid, y_valid): 
     """ 
@@ -225,7 +225,7 @@ def lightgbm(X_train, y_train, X_valid, y_valid):
     auc = roc_auc_score(y_valid, y_predict)
     print("Num Estimators:{est} Eval set AUROC:{roc}".format(est=gbm.best_iteration_ , roc=auc))
 
-    return y_predict, auc, best_params
+    return gbm, y_predict, auc, best_params
 
 def write_params_to_json(clf, output_path, model, TAB):
 
@@ -271,9 +271,10 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--model_class', default=None, type=str, help='ridge/lasso/lightgbm/random_forest/ffnn')
     parser.add_argument('--data_dir', default="", type=str, help='directory with sparce matrices train val test')
-    parser.add_argument('--label', default="label_max24", type=str, help='the column name for label in traige_TE.triage_cohort_final_with_labels_complete1vs')
+    parser.add_argument('--label', default="", type=str, help='the column name for label in traige_TE.triage_cohort_final_with_labels_complete1vs')
     parser.add_argument('--output_dir', default="", type=str, help='directory to save outputs')
     parser.add_argument('--val', action='store_true', help='True if performing validation (i.e. not using test data)')
+
     args = parser.parse_args()
     model = args.model_class
 
@@ -294,9 +295,12 @@ def main():
     output_path = args.output_dir
     val_flag = args.val
 
-    if model == None:
+    if args.val and model == None:
         print("No model entered.")
         exit()
+
+    if not args.val and args.label == "":
+        print("If testing must specify which antibiotic(s)")
 
     TAB = "_validation" if val_flag else "_test"
 
@@ -323,38 +327,84 @@ def main():
         y_test_df = pd.read_csv(os.path.join(args.data_dir, 'test_labels_round_testing.csv'))
         y_test = y_test_df[args.label].values
         
-    
     print("Starting training...")
-    if model == "ridge":
-        predict, roc, clf_opt = ridge(X_train, y_train, X_test, y_test)
-    elif model == "lasso":
-        predict, roc, clf_opt = lasso(X_train,y_train, X_test, y_test) 
-    elif model == "elastic_net":
-        predict,roc, clf_opt = elastic_net(X_train, y_train, X_test, y_test)
-    elif model == "random_forest":
-        predict, roc, clf_opt = random_forest(X_train, y_train, X_test, y_test)
-    elif model == "lightgbm":
-        predict, roc, clf_opt = lightgbm(X_train, y_train, X_test, y_test)
-    else:
-        print("Model not recognized!")
+    if args.val: # then we manually specify model type
 
-    print("%s AUROC %s: " % (args.model_class, roc))
+        if model == "ridge":
+            clf, predict, roc, clf_opt = ridge(X_train, y_train, X_test, y_test)
+        elif model == "lasso":
+            clf, predict, roc, clf_opt = lasso(X_train,y_train, X_test, y_test) 
+        elif model == "elastic_net":
+            clf, predict, roc, clf_opt = elastic_net(X_train, y_train, X_test, y_test)
+        elif model == "random_forest":
+            clf, predict, roc, clf_opt = random_forest(X_train, y_train, X_test, y_test)
+        elif model == "lightgbm":
+            clf, predict, roc, clf_opt = lightgbm(X_train, y_train, X_test, y_test)
+        else:
+            print("Model not recognized!")
+    else: # otherwise we use the best model class from validation experiment
+
+        path = '/home/conorcorbin/repos/er_infection/results/ast_models/validation/{model}/{abx}' # hardcoded
+        best_auroc = 0.0
+        best_model_class = None
+        for model in ['lasso', 'ridge', 'lightgbm', 'random_forest']:
+            auroc_path = os.path.join(path.format(model=model, abx=args.label), 'auroc.txt')
+            with open(auroc_path, 'r') as f:
+                auroc = float(f.read())
+                print("Model: {model} Val AUROC:{auc}".format(model=model,auc=str(auroc)))
+            if auroc > best_auroc:
+                best_model_class = model
+                best_auroc = auroc
+        print("Best Model: {model}".format(model=best_model_class))
+        model = best_model_class
+        if model == "ridge":
+            clf, predict, roc, clf_opt = ridge(X_train, y_train, X_test, y_test)
+        elif model == "lasso":
+            clf, predict, roc, clf_opt = lasso(X_train,y_train, X_test, y_test) 
+        elif model == "elastic_net":
+            clf, predict, roc, clf_opt = elastic_net(X_train, y_train, X_test, y_test)
+        elif model == "random_forest":
+            clf, predict, roc, clf_opt = random_forest(X_train, y_train, X_test, y_test)
+        elif model == "lightgbm":
+            clf, predict, roc, clf_opt = lightgbm(X_train, y_train, X_test, y_test)
+        else:  
+            print("Model not recognized!")
+
+
+    print("%s AUROC %s: " % (model, roc))
     # Write AUROC to file so we can read it in later if this is val
-    if args.val:
-        f_auroc = os.path.join(output_path, 'auroc.txt')
-        with open(f_auroc, 'w') as w:
-            w.write(str(round(roc, 5)))
+    f_auroc = os.path.join(output_path, 'auroc.txt')
+    with open(f_auroc, 'w') as w:
+        w.write(str(round(roc, 5)))
 
     # Write optimal hyerparameters to file
-    f_params = os.path.join(output_path, 'best_params.json')
+    f_params = os.path.join(output_path, '%s_best_params.json' % model)
     with open(f_params, 'w') as w:
         json.dump(clf_opt, w) 
 
     ## Save predictions
-    print("Saving predictions to: " + output_path + "predictions.csv")
+    print("Saving predictions to: " + output_path + "/%s_predictions.csv" % model)
     y_test_df["label"] = y_test
     y_test_df["predictions"] = predict
-    y_test_df.to_csv(os.path.join(output_path, "predictions.csv"))
+    y_test_df.to_csv(os.path.join(output_path, "%s_predictions.csv" % model))
+
+    # If testing, save top 50 features
+    if model in ['ridge', 'lasso']:
+        # use coeff parameter and sort by absolute value to get top features
+        inds = [i for i in range(len(clf.coef_))]
+        features_imps = [abs(c) for c in clf.coef_]
+    else:
+        inds = [i for i in range(len(clf.feature_importances_))]
+        feature_imps = clf.feature_importances_
+    df_features = pd.DataFrame()
+    df_features['feature_indices'] = inds
+    df_features['feature_importances'] = feature_imps
+    df_features_top_50 = (df_features
+        .sort_values('feature_importances', ascending=False)
+        .head(50)
+    )
+    print("Saving feature importances to: " + output_path + "/%s_feature_importances.csv" % model)
+    df_features_top_50.to_csv(os.path.join(output_path, "%s_feature_importances.csv" % model), index=None)
 
 
 if __name__ == "__main__":
