@@ -236,7 +236,7 @@ def write_params_to_json(clf, output_path, model, TAB):
         json.dump(clf.get_params(), open(json_path, 'w'))
     else: # lightgbm
         params = clf.get_params()
-        params["n_estimators"] = clf.best_iteration_ #Add in early stopping round 
+        params["n_estimators"] = clf.best_iteration_ # Add in early stopping round 
         json.dump(params, open(json_path, 'w'))
 
 def read_from_json(json_file, model):
