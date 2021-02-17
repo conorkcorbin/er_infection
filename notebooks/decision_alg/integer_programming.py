@@ -417,7 +417,7 @@ def main():
     plt.plot([i for i in range(62, 100, 1)], [clin_covered_rate for i in range(62, 100, 1)], label='Clin Covered Rate')
     plt.plot([i for i in range(62, 100, 1)], [random_covered_rate for i in range(62, 100, 1)], label='Random Covered Rate')
     plt.legend()
-    plt.savefig('./simulated_auroc_improvement.jpg')
+    plt.savefig('./simulated_auroc_improvement_2.jpg')
 
 if __name__ == '__main__':
     main()
