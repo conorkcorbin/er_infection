@@ -267,7 +267,6 @@ def retrain_from_model(X_train, y_train, X_test, y_test, clf, model):
     return y_predict, roc
 
 def main():
-    import pdb
     parser = argparse.ArgumentParser()
     parser.add_argument('--model_class', default=None, type=str, help='ridge/lasso/lightgbm/random_forest/ffnn')
     parser.add_argument('--data_dir', default="", type=str, help='directory with sparce matrices train val test')
