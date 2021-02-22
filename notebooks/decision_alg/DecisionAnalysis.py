@@ -326,8 +326,19 @@ def main():
                     'Ampicillin',
                     'Vancomycin'
                     ]
-    df_predictions = load_predictions()
-    df_drugs = get_clinician_prescribing_patterns()
+    
+    if os.path.exists('df_predictions.csv'):
+        df_predictions = pd.read_csv('df_predictions.csv')
+    else:
+        df_predictions = load_predictions()
+        df_predictions.to_csv('df_predictions.csv', index=None)
+
+
+    if os.path.exists('df_drugs.csv'):
+        df_drugs = pd.read_csv('df_drugs.csv')
+    else:
+        df_drugs = get_clinician_prescribing_patterns()
+        df_drugs.to_csv('df_drugs.csv', index=None)
 
     deplete_idx = 0
     push_from_idx = 0
