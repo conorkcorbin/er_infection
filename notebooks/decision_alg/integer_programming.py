@@ -360,8 +360,9 @@ def compute_was_covered(x, decision_column='med_description'):
         return "Not in abx options"
 
 def get_coverage_rates(df):
-    """Create flag for whether clinicians covered the patient during the csn, whether a random assignemnt
-     covered patient CSN, and whether optimized assignment covered the patient CSN
+    """
+    Create flag for whether clinicians covered the patient during the csn, whether a random assignemnt
+    covered patient CSN, and whether optimized assignment covered the patient CSN
     """
 
     df = (df
