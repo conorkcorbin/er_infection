@@ -46,6 +46,13 @@ abx_map = {'Ceftriaxone' : "CEFTRIAXONE",
            'Ampicillin' : 'AMPICILLIN'
           }
 abx_map_inverse = {abx_map[key] : key for key in abx_map}
+abx_map_inverse['CEFTRIAXONE PIPERACILLIN-TAZOBACTAM VANCOMYCIN'] = 'Vancomycin_Zosyn'
+abx_map_inverse['LEVOFLOXACIN PIPERACILLIN-TAZOBACTAM VANCOMYCIN'] = 'Vancomycin_Zosyn'
+abx_map_inverse['AZITHROMYCIN PIPERACILLIN-TAZOBACTAM VANCOMYCIN'] = 'Vancomycin_Zosyn'
+abx_map_inverse['MEROPENEM PIPERACILLIN-TAZOBACTAM VANCOMYCIN'] = 'Vancomycin_Meropenem'
+abx_map_inverse['AZITHROMYCIN CEFTRIAXONE'] = 'Ceftriaxone'
+
+
 
 from sklearn.base import BaseEstimator
 
@@ -245,6 +252,7 @@ def get_clinician_prescribing_patterns():
         .reset_index()
         # Only look at test set data and CSNs where allowed antibiotic selection was administered
         .query("year == 2019 and med_description in @abx_map_inverse", engine='python') 
+        .assign(med_description=lambda x: [abx_map_inverse[a] for a in x.med_description])
     )
 
     # Roughly 700 of the 1300 original CSNs in the test set
@@ -331,33 +339,35 @@ def compute_was_covered(x, decision_column='med_description'):
         med_description = x.random_med_description
     elif decision_column == 'IP_med_description':
         med_description = x.IP_med_description
+
+    return x[med_description]
         
-    if med_description == "CEFTRIAXONE":
-        return x.Ceftriaxone
-    elif med_description == "PIPERACILLIN-TAZOBACTAM VANCOMYCIN":
-        return x.Vancomycin_Zosyn
-    elif med_description == "PIPERACILLIN-TAZOBACTAM":
-        return x.Zosyn
-    elif med_description == "CEFTRIAXONE VANCOMYCIN":
-        return x.Vancomycin_Ceftriaxone
-    elif med_description == "CEFEPIME VANCOMYCIN":
-        return x.Vancomycin_Cefepime
-    elif med_description == "CEFEPIME":
-        return x.Cefepime
-    elif med_description == "VANCOMYCIN":
-        return x.Vancomycin
-    elif med_description == "MEROPENEM":
-        return x.Meropenem
-    elif med_description == "MEROPENEM VANCOMYCIN":
-        return x.Vancomycin_Meropenem
-    elif med_description == "CEFAZOLIN":
-        return x.Cefazolin
-    elif med_description == "CIPROFLOXACIN":
-        return x.Ciprofloxacin
-    elif med_description == "AMPICILLIN":
-        return x.Ampicillin
-    else:
-        return "Not in abx options"
+    # if med_description == "CEFTRIAXONE":
+    #     return x.Ceftriaxone
+    # elif med_description == "PIPERACILLIN-TAZOBACTAM VANCOMYCIN":
+    #     return x.Vancomycin_Zosyn
+    # elif med_description == "PIPERACILLIN-TAZOBACTAM":
+    #     return x.Zosyn
+    # elif med_description == "CEFTRIAXONE VANCOMYCIN":
+    #     return x.Vancomycin_Ceftriaxone
+    # elif med_description == "CEFEPIME VANCOMYCIN":
+    #     return x.Vancomycin_Cefepime
+    # elif med_description == "CEFEPIME":
+    #     return x.Cefepime
+    # elif med_description == "VANCOMYCIN":
+    #     return x.Vancomycin
+    # elif med_description == "MEROPENEM":
+    #     return x.Meropenem
+    # elif med_description == "MEROPENEM VANCOMYCIN":
+    #     return x.Vancomycin_Meropenem
+    # elif med_description == "CEFAZOLIN":
+    #     return x.Cefazolin
+    # elif med_description == "CIPROFLOXACIN":
+    #     return x.Ciprofloxacin
+    # elif med_description == "AMPICILLIN":
+    #     return x.Ampicillin
+    # else:
+    #     return "Not in abx options"
 
 def get_coverage_rates(df):
     """

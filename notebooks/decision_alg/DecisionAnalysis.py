@@ -2,7 +2,8 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib.gridspec as gridspec
 import seaborn as sns
-sns.set(style='white', font_scale=1.0)
+from tqdm import tqdm
+sns.set(style='white', font_scale=1.5)
 import numpy as np
 from pulp import *
 import os, glob
@@ -26,7 +27,7 @@ def load_predictions():
                    "Vancomycin_Cefepime",
                    "Vancomycin_Ceftriaxone"
                    ]
-    base_path="/Users/conorcorbin/repos/er_infection/results/ast_models/testing/{abx}"
+    base_path="/Users/conorcorbin/repos/er_infection/results/ast_models_bucket1/testing/{abx}"
     df = pd.DataFrame()
     for i, abx in enumerate(abx_options):
         path = base_path.format(abx=abx)
@@ -83,9 +84,62 @@ class AbxDecisionMaker():
                         'Ampicillin' : 'AMPICILLIN'
                         }
         self.abx_map_inverse = {self.abx_map[key] : key for key in self.abx_map}
+        self.abx_map_inverse['CEFTRIAXONE PIPERACILLIN-TAZOBACTAM VANCOMYCIN'] = 'Vancomycin_Zosyn'
+        self.abx_map_inverse['LEVOFLOXACIN PIPERACILLIN-TAZOBACTAM VANCOMYCIN'] = 'Vancomycin_Zosyn'
+        self.abx_map_inverse['AZITHROMYCIN PIPERACILLIN-TAZOBACTAM VANCOMYCIN'] = 'Vancomycin_Zosyn'
+        self.abx_map_inverse['MEROPENEM PIPERACILLIN-TAZOBACTAM VANCOMYCIN'] = 'Vancomycin_Meropenem'
+        self.abx_map_inverse['AZITHROMYCIN CEFTRIAXONE'] = 'Ceftriaxone'
+
+        # Assign random med descriptions here. 
+        self.df = (self.df
+            .assign(random_med_description=lambda x: np.random.choice(x.med_description,
+                                                                      size=len(x.med_description),
+                                                                      replace=False))
+        )
+
+        self.df_for_reset = self.df.copy()
+
 
     def set_abx_settings(self, abx_settings):
         self.abx_settings = abx_settings
+
+    def reset_df(self):
+        self.df = self.df_for_reset.copy()
+
+    def replace_one(self, to_replace, replace_with):
+        """ Randomly takes one allocation of to_replace from the clinician and random
+        allocation and replaces with replace_with
+        """
+
+        # Replace one clinician allocation
+        num_to_replace_before = len(self.df[self.df['med_description'] == to_replace])
+        num_replace_with_before = len(self.df[self.df['med_description'] == replace_with])
+        inds = [i for i in range(len(self.df)) if self.df['med_description'].values[i] == to_replace]
+        ind = np.random.choice(inds)
+        self.df = (self.df
+            .assign(med_description=lambda x: [a if i != ind else replace_with 
+                                              for i, a in enumerate(x.med_description)])
+        )
+        num_to_replace_after = len(self.df[self.df['med_description'] == to_replace])
+        num_replace_with_after = len(self.df[self.df['med_description'] == replace_with])
+
+        assert num_to_replace_before == num_to_replace_after + 1
+        assert num_replace_with_before == num_replace_with_after - 1 
+        
+        # Replace one random allocation
+        num_to_replace_before = len(self.df[self.df['random_med_description'] == to_replace])
+        num_replace_with_before = len(self.df[self.df['random_med_description'] == replace_with])
+        inds = [i for i in range(len(self.df)) if self.df['random_med_description'].values[i] == to_replace]
+        ind = np.random.choice(inds)
+        self.df = (self.df
+            .assign(random_med_description=lambda x: [a if i != ind else replace_with 
+                                                      for i, a in enumerate(x.random_med_description)])
+        )
+        num_to_replace_after = len(self.df[self.df['random_med_description'] == to_replace])
+        num_replace_with_after = len(self.df[self.df['random_med_description'] == replace_with])
+
+        assert num_to_replace_before == num_to_replace_after + 1
+        assert num_replace_with_before == num_replace_with_after - 1 
 
     def compute_was_covered(self, x, decision_column='med_description'):
         """
@@ -98,33 +152,34 @@ class AbxDecisionMaker():
             med_description = x.random_med_description
         elif decision_column == 'IP_med_description':
             med_description = x.IP_med_description
-            
-        if med_description == "CEFTRIAXONE":
-            return x.Ceftriaxone
-        elif med_description == "PIPERACILLIN-TAZOBACTAM VANCOMYCIN":
-            return x.Vancomycin_Zosyn
-        elif med_description == "PIPERACILLIN-TAZOBACTAM":
-            return x.Zosyn
-        elif med_description == "CEFTRIAXONE VANCOMYCIN":
-            return x.Vancomycin_Ceftriaxone
-        elif med_description == "CEFEPIME VANCOMYCIN":
-            return x.Vancomycin_Cefepime
-        elif med_description == "CEFEPIME":
-            return x.Cefepime
-        elif med_description == "VANCOMYCIN":
-            return x.Vancomycin
-        elif med_description == "MEROPENEM":
-            return x.Meropenem
-        elif med_description == "MEROPENEM VANCOMYCIN":
-            return x.Vancomycin_Meropenem
-        elif med_description == "CEFAZOLIN":
-            return x.Cefazolin
-        elif med_description == "CIPROFLOXACIN":
-            return x.Ciprofloxacin
-        elif med_description == "AMPICILLIN":
-            return x.Ampicillin
-        else:
-            return "Not in abx options"
+        
+        return x[med_description]
+        # if med_description == "CEFTRIAXONE":
+        #     return x.Ceftriaxone
+        # elif med_description == "PIPERACILLIN-TAZOBACTAM VANCOMYCIN":
+        #     return x.Vancomycin_Zosyn
+        # elif med_description == "PIPERACILLIN-TAZOBACTAM":
+        #     return x.Zosyn
+        # elif med_description == "CEFTRIAXONE VANCOMYCIN":
+        #     return x.Vancomycin_Ceftriaxone
+        # elif med_description == "CEFEPIME VANCOMYCIN":
+        #     return x.Vancomycin_Cefepime
+        # elif med_description == "CEFEPIME":
+        #     return x.Cefepime
+        # elif med_description == "VANCOMYCIN":
+        #     return x.Vancomycin
+        # elif med_description == "MEROPENEM":
+        #     return x.Meropenem
+        # elif med_description == "MEROPENEM VANCOMYCIN":
+        #     return x.Vancomycin_Meropenem
+        # elif med_description == "CEFAZOLIN":
+        #     return x.Cefazolin
+        # elif med_description == "CIPROFLOXACIN":
+        #     return x.Ciprofloxacin
+        # elif med_description == "AMPICILLIN":
+        #     return x.Ampicillin
+        # else:
+        #     return "Not in abx options"
 
     def get_coverage_rates(self):
         """
@@ -133,16 +188,11 @@ class AbxDecisionMaker():
         """
 
         df = (self.df
-            .assign(random_med_description=lambda x: np.random.choice(x.IP_med_description,
-                                                                      size=len(x.IP_med_description),
-                                                                      replace=False))
-        )
-        df = (df
-            .assign(was_covered_dr=df.apply(lambda x: self.compute_was_covered(x), axis=1))
-            .assign(was_covered_random=df.apply(lambda x: self.compute_was_covered(x, 
+            .assign(was_covered_dr=self.df.apply(lambda x: self.compute_was_covered(x), axis=1))
+            .assign(was_covered_random=self.df.apply(lambda x: self.compute_was_covered(x, 
                                                 decision_column='random_med_description'),
                                                 axis=1))
-            .assign(was_covered_IP=df.apply(lambda x: self.compute_was_covered(x, 
+            .assign(was_covered_IP=self.df.apply(lambda x: self.compute_was_covered(x, 
                                             decision_column='IP_med_description'),
                                             axis=1))
         )
@@ -195,7 +245,7 @@ class AbxDecisionMaker():
             abx_decision = None
             for abx in self.abx_options:
                 if drug_inds[abx][i].value() == 1:
-                    abx_decision = self.abx_map[abx]
+                    abx_decision = abx
             assert abx_decision is not None
             abx_decisions.append(abx_decision)
         self.df['IP_med_description'] = abx_decisions
@@ -212,13 +262,13 @@ def perform_abx_sweep():
     abx_settings = {"Vancomycin" : 13,
                 "Ampicillin" : 0,
                 "Cefazolin" : 8,
-                "Ceftriaxone" : 367,
+                "Ceftriaxone" : 404,
                 "Cefepime" : 14,
                 "Zosyn" : 102,
                 "Ciprofloxacin" : 8,
                 "Meropenem" : 9,
-                "Vancomycin_Meropenem" : 9,
-                "Vancomycin_Zosyn" :  113,
+                "Vancomycin_Meropenem" : 16,
+                "Vancomycin_Zosyn" :  153,
                 "Vancomycin_Cefepime" : 23,
                 "Vancomycin_Ceftriaxone" : 31
                 }
@@ -229,24 +279,42 @@ def perform_abx_sweep():
     random_covered_rate, clin_covered_rate, ip_covered_rate = opt.get_coverage_rates()
 
     for abx_to_perturb in abx_settings:
-        plt.figure(figsize=(32,24))
+        # plt.figure(figsize=(32,24))
         # fig, ax = plt.subplots(3, 4, figsize=(32, 24))
-        gs = gridspec.GridSpec(4, 24, wspace=2.0)
-        ax1a = plt.subplot(gs[0, 0:6])
-        ax1b = plt.subplot(gs[0, 6:12])
-        ax1c = plt.subplot(gs[0, 12:18])
-        ax1d = plt.subplot(gs[0, 18:24])
+        # gs = gridspec.GridSpec(4, 24, wspace=2.0)
+        # ax1a = plt.subplot(gs[0, 0:6])
+        # ax1b = plt.subplot(gs[0, 6:12])
+        # ax1c = plt.subplot(gs[0, 12:18])
+        # ax1d = plt.subplot(gs[0, 18:24])
         
-        ax2a = plt.subplot(gs[1, 3:9])
-        ax2b = plt.subplot(gs[1, 9:15])
-        ax2c = plt.subplot(gs[1, 15:21])
+        # ax2a = plt.subplot(gs[1, 3:9])
+        # ax2b = plt.subplot(gs[1, 9:15])
+        # ax2c = plt.subplot(gs[1, 15:21])
 
-        ax3a = plt.subplot(gs[2, 0:6])
-        ax3b = plt.subplot(gs[2, 6:12])
-        ax3c = plt.subplot(gs[2, 12:18])
-        ax3d = plt.subplot(gs[2, 18:24])
+        # ax3a = plt.subplot(gs[2, 0:6])
+        # ax3b = plt.subplot(gs[2, 6:12])
+        # ax3c = plt.subplot(gs[2, 12:18])
+        # ax3d = plt.subplot(gs[2, 18:24])
 
-        axes = [ax1a, ax1b, ax1c, ax1d, ax2a, ax2b, ax2c, ax3a, ax3b, ax3c, ax3d]
+        plt.figure(figsize=(24,32))
+        gs = gridspec.GridSpec(4, 6, wspace=0.5)
+        ax1a = plt.subplot(gs[0, 0:2])
+        ax1b = plt.subplot(gs[0, 2:4])
+        ax1c = plt.subplot(gs[0, 4:6])
+
+        ax2a = plt.subplot(gs[1, 0:2])
+        ax2b = plt.subplot(gs[1, 2:4])
+        ax2c = plt.subplot(gs[1, 4:6])
+
+        ax3a = plt.subplot(gs[2, 0:2])
+        ax3b = plt.subplot(gs[2, 2:4])
+        ax3c = plt.subplot(gs[2, 4:6])
+
+        ax4a = plt.subplot(gs[3, 1:3])
+        ax4b = plt.subplot(gs[3, 3:5])
+
+
+        axes = [ax1a, ax1b, ax1c, ax2a, ax2b, ax2c, ax3a, ax3b, ax3c, ax4a, ax4b]
 
         skip = 0
         for ind, abx in enumerate(abx_settings):
@@ -289,17 +357,17 @@ def perform_abx_sweep():
             axes[ind-skip].set_xlabel("Num %s Administered" % abx)
             # secaxes[ind-skip].set_xlabel("Num %s Administered" % abx_to_perturb)
             axes[ind-skip].set_ylabel("Coverage Rate")
-            axes[ind-skip].set_ylim((0., 1.))
+            axes[ind-skip].set_ylim((0.5, 1.))
             axes[ind-skip].set_title("%s to %s Sweep" % (abx_to_perturb, abx))
             axes[ind-skip].legend()
         
-        fig_name = "%s_sweeps.jpg" % abx_to_perturb
+        dir_='./tall_grid/'
+        os.makedirs(dir_, exist_ok=True)
+        fig_name = "./tall_grid/%s_sweeps.jpg" % abx_to_perturb
         plt.savefig(fig_name)
 
 
-
-
-def main():
+def full_waterfall():
     abx_settings = {"Vancomycin" : 0,
                     "Ampicillin" : 0,
                     "Cefazolin" : 0,
@@ -387,6 +455,162 @@ def main():
     fig_name = "summary_sweep.jpg"
     plt.savefig(fig_name)
 
+def bootstrap_miss_rates():
+    abx_settings = {"Vancomycin" : 13,
+            "Ampicillin" : 0,
+            "Cefazolin" : 8,
+            "Ceftriaxone" : 404,
+            "Cefepime" : 14,
+            "Zosyn" : 102,
+            "Ciprofloxacin" : 8,
+            "Meropenem" : 9,
+            "Vancomycin_Meropenem" : 16,
+            "Vancomycin_Zosyn" :  153,
+            "Vancomycin_Cefepime" : 23,
+            "Vancomycin_Ceftriaxone" : 31
+            }
+
+    df_predictions = load_predictions()
+    df_drugs = get_clinician_prescribing_patterns()
+    rs, cs, ls = [], [], []
+    l_c_relatives, l_r_relatives = [], []
+    for i in tqdm(range(1000)):
+
+        # Stratified bootstrap
+        df_drugs_b = pd.DataFrame()
+        for abx in abx_settings:
+            df_temp = (df_drugs
+                .query("med_description == @abx", engine='python')
+                .sample(frac=1.0, replace=True)
+            )
+            df_drugs_b = pd.concat([df_drugs_b, df_temp])
+        
+        opt = AbxDecisionMaker(df_predictions, df_drugs_b, abx_settings)
+        opt.solve_and_assign()
+        r, c, l = opt.get_coverage_rates()
+        rs.append(1-r)
+        cs.append(1-c)
+        ls.append(1-l)
+        l_r_relative = ((rs[-1] - ls[-1]) / rs[-1]) * 100
+        l_r_relatives.append(l_r_relative)
+        l_c_relative = ((cs[-1] - ls[-1]) / cs[-1]) * 100
+        l_c_relatives.append(l_c_relative)
+
+    # Miss Rates
+    r_mean = np.mean(rs) * 100
+    r_low = np.percentile(rs, 2.5) * 100
+    r_high = np.percentile(rs, 97.5) * 100
+    r_miss_rate = "%.2f [%.2f, %.2f]" % (r_mean, r_low, r_high)
+
+    c_mean = np.mean(cs) * 100
+    c_low = np.percentile(cs, 2.5) * 100
+    c_high = np.percentile(cs, 97.5) * 100
+    c_miss_rate = "%.2f [%.2f, %.2f]" % (c_mean, c_low, c_high)
+
+    l_mean = np.mean(ls) * 100
+    l_low = np.percentile(ls, 2.5) * 100
+    l_high = np.percentile(ls, 97.5) * 100
+    l_miss_rate = "%.2f [%.2f, %.2f]" % (l_mean, l_low, l_high)
+
+    # Relative Miss Reductions
+    l_c_means = np.mean(l_c_relatives)
+    l_c_low = np.percentile(l_c_relatives, 2.5)
+    l_c_high = np.percentile(l_c_relatives, 97.5)
+    l_c_final = "%.2f [%.2f, %.2f]" % (l_c_means, l_c_low, l_c_high)
+
+    l_r_means = np.mean(l_r_relatives)
+    l_r_low = np.percentile(l_r_relatives, 2.5)
+    l_r_high = np.percentile(l_r_relatives, 97.5)
+    l_r_final = "%.2f [%.2f, %.2f]" % (l_r_means, l_r_low, l_r_high)
+
+    return r_miss_rate, c_miss_rate, l_miss_rate, l_r_final, l_c_final
+
+def plot_select_sweeps():
+    """ Plot Vancomycin & Zosyn to Zosyn 
+        Plot Zosyn to Cefazolin
+    """
+    abx_settings = {"Vancomycin" : 13,
+                "Ampicillin" : 0,
+                "Cefazolin" : 8,
+                "Ceftriaxone" : 404,
+                "Cefepime" : 14,
+                "Zosyn" : 102,
+                "Ciprofloxacin" : 8,
+                "Meropenem" : 9,
+                "Vancomycin_Meropenem" : 16,
+                "Vancomycin_Zosyn" :  153,
+                "Vancomycin_Cefepime" : 23,
+                "Vancomycin_Ceftriaxone" : 31
+                }
+    df_predictions = load_predictions()
+    df_drugs = get_clinician_prescribing_patterns()
+    opt = AbxDecisionMaker(df_predictions, df_drugs, abx_settings)
+    opt.solve_and_assign()
+    random_covered_rate, clin_covered_rate, ip_covered_rate = opt.get_coverage_rates()
+    baseline_clin_miss_rate = 1-clin_covered_rate
+    sweep_one = ("Vancomycin_Zosyn", "Zosyn")
+    sweep_two = ("Zosyn", "Cefazolin")
+    sweep_three = ("Zosyn", "Ampicillin")
+    fig, ax = plt.subplots(1, 3, figsize=(24,8))
+
+    for k, sweep in enumerate([sweep_one, sweep_two, sweep_three]):
+        opt.reset_df()
+        abx_settings_perturbed = {key : abx_settings[key] for key in abx_settings}
+        max_deescalation = None
+        print("Performing %s to %s sweep" % (sweep[0], sweep[1]))
+        random_rates, clin_rates, ip_rates = [], [], []
+        c_from_rs, ip_from_rs = [], []
+
+        opt.set_abx_settings(abx_settings_perturbed)
+        opt.solve_and_assign()
+        r, c, i = opt.get_coverage_rates()
+
+        random_rates.append(1-r)
+        ip_rates.append(1-i)
+        clin_rates.append(1-c)
+
+        for iter_ in tqdm(range(abx_settings[sweep[0]])):
+            abx_settings_perturbed[sweep[0]] -= 1
+            abx_settings_perturbed[sweep[1]] += 1
+            opt.set_abx_settings(abx_settings_perturbed)
+            opt.replace_one(sweep[0], sweep[1])
+            opt.solve_and_assign()
+            r, c, i = opt.get_coverage_rates()
+
+            random_rates.append(1-r)
+            ip_rates.append(1-i)
+            clin_rates.append(1-c)
+
+            if 1-i > baseline_clin_miss_rate and max_deescalation is None:
+                # Number of iterations before gettting to baseline clinician error rate
+                max_deescalation = abx_settings[sweep[0]] - abx_settings_perturbed[sweep[0]] + 1
+                max_deescaltion_miss_rate = ip_rates[len(ip_rates)-2]
+                print(max_deescalation)
+            # if abx_settings_perturbed == abx_settings:
+            #     clin_iter = iter_ # save point on x axis for clinician performance
+        if max_deescalation is None:
+            max_deescalation = abx_settings[sweep[0]]
+
+        deescalations = [i for i in range(len(random_rates))]
+        deescalations.reverse()
+        ax[k].plot(deescalations, ip_rates, label='Optimized Allocation', linewidth=2.0)
+        ax[k].plot(deescalations, clin_rates, label='Clinician Allocation', linewidth=2.0)
+        ax[k].plot(deescalations, random_rates, label='Random Allocation', linewidth=2.0)
+        ax[k].plot(deescalations, [baseline_clin_miss_rate for c in range(len(random_rates))], linestyle='--', color='black',
+                   label='Clinician Real World Allocation')
+        ax[k].invert_xaxis()
+        ax[k].set_title("Replacing %s with %s" % (sweep[0], sweep[1]))
+        ax[k].set_xlabel("Number of %s Allocated" % sweep[0])
+        ax[k].set_ylabel("Miss Rate")
+        ax[k].set_ylim((0.10, 0.33))
+        print("Max Re-allocations of %s to %s: %s" % (sweep[0], sweep[1], str(max_deescalation)))
+        ax[k].legend(loc='upper left')
+
+    plt.savefig('broad_to_narrow_sweep.png')
+
+    ## TODO: plot miss rates themselves (not relative reduction in miss rate and confirm
+    # that clinician miss rate is monotonically decreasing )
+
 def test_waterfall():
     abx_settings = {"a" : 2,
                      "b" : 0,
@@ -447,5 +671,44 @@ def test_waterfall():
         except:
             pdb.set_trace()
 
+def plot_distribution_of_allocated_abx():
+    """ Bar plots of allocated abx """
+    df = pd.DataFrame()
+    abx_settings = {
+            "V & M" : 16,
+            "V & Z" :  153,
+            "V & C4" : 23,
+            "Z" : 102,
+            "V & C3" : 31,
+            "M" : 9,
+            "C4" : 14,
+            "C3" : 404,
+            "Cipro" : 8,
+            "C1" : 8,
+            "V" : 13         
+            }
+    df['Antibiotic'] = [a for a in abx_settings]
+    df['Count'] = [abx_settings[a] for a in abx_settings]
+
+    fig, ax = plt.subplots(1, 1, figsize=(16,8))
+    ax = sns.barplot(x="Antibiotic", y="Count", data=df, palette=sns.color_palette())
+    ax.set_title('Distribution of Selected Antibiotics 2019')
+    ax.set_xlabel('')
+    ax.set_ylabel('')
+    # plt.xticks(rotation=45)
+    # plt.show()
+    plt.savefig('abx_distribution.png')
+
+
 if __name__ == '__main__':
-    main()
+    # r, c, l, lr, lc = bootstrap_miss_rates()
+    # fname = './bootstrapped_miss_rates.txt'
+    # with open(fname, 'w') as w:
+    #     w.write("Random miss rate:%s\n" % r)
+    #     w.write("Clinician miss rate:%s\n" % c)
+    #     w.write("Optimized miss rate:%s\n" % l)
+    #     w.write("Relative Reduction Miss Rate Optimized to Random:%s\n" % lr)
+    #     w.write("Relative Reduction Miss Rate Optimized to Clinician:%s\n" % lc)
+
+    # plot_distribution_of_allocated_abx()
+    plot_select_sweeps()
