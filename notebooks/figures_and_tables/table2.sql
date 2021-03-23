@@ -1,6 +1,6 @@
 WITH cohort_bugs AS (
 SELECT DISTINCT
-  a.anon_id, a.pat_enc_csn_id_coded, a.index_time, cs.organism
+  a.anon_id, a.pat_enc_csn_id_coded, a.index_time, cs.organism, cs.description
 FROM  
   `mining-clinical-decisions.abx.final_ast_labels` a
 INNER JOIN

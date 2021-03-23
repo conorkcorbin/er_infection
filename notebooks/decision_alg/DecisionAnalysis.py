@@ -3,7 +3,7 @@ import matplotlib.pyplot as plt
 import matplotlib.gridspec as gridspec
 import seaborn as sns
 from tqdm import tqdm
-sns.set(style='white', font_scale=1.5)
+sns.set(style='white', font_scale=2.0)
 import numpy as np
 from pulp import *
 import os, glob
@@ -85,9 +85,9 @@ class AbxDecisionMaker():
                         }
         self.abx_map_inverse = {self.abx_map[key] : key for key in self.abx_map}
         self.abx_map_inverse['CEFTRIAXONE PIPERACILLIN-TAZOBACTAM VANCOMYCIN'] = 'Vancomycin_Zosyn'
-        self.abx_map_inverse['LEVOFLOXACIN PIPERACILLIN-TAZOBACTAM VANCOMYCIN'] = 'Vancomycin_Zosyn'
+        # self.abx_map_inverse['LEVOFLOXACIN PIPERACILLIN-TAZOBACTAM VANCOMYCIN'] = 'Vancomycin_Zosyn'
         self.abx_map_inverse['AZITHROMYCIN PIPERACILLIN-TAZOBACTAM VANCOMYCIN'] = 'Vancomycin_Zosyn'
-        self.abx_map_inverse['MEROPENEM PIPERACILLIN-TAZOBACTAM VANCOMYCIN'] = 'Vancomycin_Meropenem'
+        # self.abx_map_inverse['MEROPENEM PIPERACILLIN-TAZOBACTAM VANCOMYCIN'] = 'Vancomycin_Meropenem'
         self.abx_map_inverse['AZITHROMYCIN CEFTRIAXONE'] = 'Ceftriaxone'
 
         # Assign random med descriptions here. 
@@ -98,6 +98,7 @@ class AbxDecisionMaker():
         )
 
         self.df_for_reset = self.df.copy()
+        self.n = len(df_drugs)
 
 
     def set_abx_settings(self, abx_settings):
@@ -181,18 +182,20 @@ class AbxDecisionMaker():
         # else:
         #     return "Not in abx options"
 
-    def get_coverage_rates(self):
+    def get_coverage_rates(self, df=None):
         """
         Create flag for whether clinicians covered the patient during the csn, whether a random assignemnt
         covered patient CSN, and whether optimized assignment covered the patient CSN
         """
+        if df is None:
+            df = self.df
 
-        df = (self.df
-            .assign(was_covered_dr=self.df.apply(lambda x: self.compute_was_covered(x), axis=1))
-            .assign(was_covered_random=self.df.apply(lambda x: self.compute_was_covered(x, 
+        df = (df
+            .assign(was_covered_dr=df.apply(lambda x: self.compute_was_covered(x), axis=1))
+            .assign(was_covered_random=df.apply(lambda x: self.compute_was_covered(x, 
                                                 decision_column='random_med_description'),
                                                 axis=1))
-            .assign(was_covered_IP=self.df.apply(lambda x: self.compute_was_covered(x, 
+            .assign(was_covered_IP=df.apply(lambda x: self.compute_was_covered(x, 
                                             decision_column='IP_med_description'),
                                             axis=1))
         )
@@ -457,37 +460,51 @@ def full_waterfall():
 
 def bootstrap_miss_rates():
     abx_settings = {"Vancomycin" : 13,
-            "Ampicillin" : 0,
-            "Cefazolin" : 8,
-            "Ceftriaxone" : 404,
-            "Cefepime" : 14,
-            "Zosyn" : 102,
-            "Ciprofloxacin" : 8,
-            "Meropenem" : 9,
-            "Vancomycin_Meropenem" : 16,
-            "Vancomycin_Zosyn" :  153,
-            "Vancomycin_Cefepime" : 23,
-            "Vancomycin_Ceftriaxone" : 31
+                    "Ampicillin" : 0,
+                    "Cefazolin" : 8,
+                    "Ceftriaxone" : 404,
+                    "Cefepime" : 14,
+                    "Zosyn" : 102,
+                    "Ciprofloxacin" : 8,
+                    "Meropenem" : 9,
+                    "Vancomycin_Meropenem" : 9,
+                    "Vancomycin_Zosyn" :  149,
+                    "Vancomycin_Cefepime" : 23,
+                    "Vancomycin_Ceftriaxone" : 31
             }
 
+    # Solve once then bootstrap solutions
     df_predictions = load_predictions()
     df_drugs = get_clinician_prescribing_patterns()
+    opt = AbxDecisionMaker(df_predictions, df_drugs, abx_settings)
+    opt.solve_and_assign()
+
     rs, cs, ls = [], [], []
     l_c_relatives, l_r_relatives = [], []
     for i in tqdm(range(1000)):
-
-        # Stratified bootstrap
-        df_drugs_b = pd.DataFrame()
-        for abx in abx_settings:
-            df_temp = (df_drugs
-                .query("med_description == @abx", engine='python')
-                .sample(frac=1.0, replace=True)
-            )
-            df_drugs_b = pd.concat([df_drugs_b, df_temp])
         
-        opt = AbxDecisionMaker(df_predictions, df_drugs_b, abx_settings)
-        opt.solve_and_assign()
-        r, c, l = opt.get_coverage_rates()
+        # Don't stratify, only stratify if bootstrapping the solving procedure as well
+        df_drugs_b = (opt.df
+            .sample(frac=1.0, replace=True)
+        )
+        # # Stratified bootstrap
+        # df_drugs_b = pd.DataFrame()
+        # for abx in abx_settings:
+        #     df_temp = (opt.df
+        #         .query("med_description == @abx", engine='python')
+        #         .sample(frac=1.0, replace=True)
+        #     )
+        #     df_drugs_b = pd.concat([df_drugs_b, df_temp])
+        
+        # Sanity Check
+        # for abx in abx_settings:
+        #     num_allocations = len(df_drugs_b[df_drugs_b['med_description'] == abx])
+        #     assert num_allocations == abx_settings[abx]
+
+        if i == 0:
+            print(opt.n)
+
+        r, c, l = opt.get_coverage_rates(df=df_drugs_b)
         rs.append(1-r)
         cs.append(1-c)
         ls.append(1-l)
@@ -525,37 +542,102 @@ def bootstrap_miss_rates():
 
     return r_miss_rate, c_miss_rate, l_miss_rate, l_r_final, l_c_final
 
+def plot_histogram(settings, ax):
+    """
+    Given antibiotic settings, plot distribution as bar plot
+    """
+    df_settings = pd.DataFrame(data={
+        'med' : [key.replace("_", " & ") for key in settings],
+        'value' : [value for key, value in settings.items()]
+    })
+    sns.barplot(x="value", y="med", ci=None, data=df_settings, ax=ax, palette="deep")
+    ax.set_xlim([0,420])
+
+def for_debugging_plot_select_sweeps(df_drugs, abx_settings):
+    """ Resample df_drugs so that there exist the specified number of allocations in settings """
+    df = pd.DataFrame()
+    for abx in abx_settings:
+        df_temp = (df_drugs
+            .query("med_description == @abx", engine='python')
+            .sample(n=abx_settings[abx])
+        )
+        df = pd.concat([df, df_temp])
+    return df
+
 def plot_select_sweeps():
     """ Plot Vancomycin & Zosyn to Zosyn 
         Plot Zosyn to Cefazolin
     """
-    abx_settings = {"Vancomycin" : 13,
-                "Ampicillin" : 0,
-                "Cefazolin" : 8,
-                "Ceftriaxone" : 404,
-                "Cefepime" : 14,
-                "Zosyn" : 102,
-                "Ciprofloxacin" : 8,
-                "Meropenem" : 9,
-                "Vancomycin_Meropenem" : 16,
-                "Vancomycin_Zosyn" :  153,
-                "Vancomycin_Cefepime" : 23,
-                "Vancomycin_Ceftriaxone" : 31
-                }
+    # abx_settings = {"Vancomycin" : 13,
+    #             "Ampicillin" : 0,
+    #             "Cefazolin" : 8,
+    #             "Ceftriaxone" : 20,#404,
+    #             "Cefepime" : 14,
+    #             "Zosyn" : 20,#102,
+    #             "Ciprofloxacin" : 8,
+    #             "Meropenem" : 9,
+    #             "Vancomycin_Meropenem" : 9,
+    #             "Vancomycin_Zosyn" :  20,#149,
+    #             "Vancomycin_Cefepime" : 23,
+    #             "Vancomycin_Ceftriaxone" : 31
+    #             }
+    abx_settings = {"Ceftriaxone" : 404,
+            "Vancomycin_Zosyn" :  149,
+            "Zosyn" : 102,
+            "Vancomycin_Ceftriaxone" : 31,
+            "Vancomycin_Cefepime" : 23,
+            "Cefepime" : 14,
+            "Vancomycin" : 13,
+            "Vancomycin_Meropenem" : 9,
+            "Meropenem" : 9,
+            "Cefazolin" : 8,
+            "Ciprofloxacin" : 8,
+            "Ampicillin" : 0,
+            }
+    f_name_missrates = 'select_sweep_miss_rates.txt'
     df_predictions = load_predictions()
     df_drugs = get_clinician_prescribing_patterns()
+    # df_drugs = for_debugging_plot_select_sweeps(df_drugs, abx_settings)
     opt = AbxDecisionMaker(df_predictions, df_drugs, abx_settings)
     opt.solve_and_assign()
     random_covered_rate, clin_covered_rate, ip_covered_rate = opt.get_coverage_rates()
     baseline_clin_miss_rate = 1-clin_covered_rate
     sweep_one = ("Vancomycin_Zosyn", "Zosyn")
     sweep_two = ("Zosyn", "Cefazolin")
-    sweep_three = ("Zosyn", "Ampicillin")
-    fig, ax = plt.subplots(1, 3, figsize=(24,8))
+    # sweep_three = ("Zosyn", "Ampicillin")
+    sweep_three = ("Ceftriaxone", 'Cefazolin')
+    sweep_four = ("Ceftriaxone", 'Ampicillin')
+    # fig, ax = plt.subplots(1, 3, figsize=(24,8))
 
-    for k, sweep in enumerate([sweep_one, sweep_two, sweep_three]):
+    plt.figure(figsize=(36,30))
+    gs = gridspec.GridSpec(5, 6, wspace=0.5, hspace=0.35)
+    ax1a = plt.subplot(gs[0, 2:4])
+
+    ax2a = plt.subplot(gs[1, 1:3])
+    ax2b = plt.subplot(gs[1, 3:5])
+
+    ax3a = plt.subplot(gs[2, 1:3])
+    ax3b = plt.subplot(gs[2, 3:5])
+
+    ax4a = plt.subplot(gs[3, 1:3])
+    ax4b = plt.subplot(gs[3, 3:5])
+
+    ax5a = plt.subplot(gs[4, 1:3])
+    ax5b = plt.subplot(gs[4, 3:5])
+
+    axes = [[ax1a], [ax2a, ax2b], [ax3a, ax3b], [ax4a, ax4b], [ax5a, ax5b]]
+
+    # Plot original clinician distribution
+    plot_histogram(abx_settings, axes[0][0])
+    axes[0][0].set_title("Actual Clinician Allocation") # hard coded miss rate
+    axes[0][0].set_xlabel("Number of Allcations")
+    axes[0][0].set_ylabel('')
+    with open (f_name_missrates, 'w') as w:
+        w.write("Clinician Miss Rate: %.2f\n" % (baseline_clin_miss_rate * 100))
+    # sweep_one = ('Cefepime', 'Cefazolin')
+    for k, sweep in enumerate([sweep_one, sweep_two, sweep_three, sweep_four]):
         opt.reset_df()
-        abx_settings_perturbed = {key : abx_settings[key] for key in abx_settings}
+        abx_settings_perturbed = {key : abx_settings[key] for key in abx_settings} #deep copy
         max_deescalation = None
         print("Performing %s to %s sweep" % (sweep[0], sweep[1]))
         random_rates, clin_rates, ip_rates = [], [], []
@@ -564,7 +646,8 @@ def plot_select_sweeps():
         opt.set_abx_settings(abx_settings_perturbed)
         opt.solve_and_assign()
         r, c, i = opt.get_coverage_rates()
-
+        if k ==0:
+            print( (1-c) * 100)
         random_rates.append(1-r)
         ip_rates.append(1-i)
         clin_rates.append(1-c)
@@ -585,7 +668,19 @@ def plot_select_sweeps():
                 # Number of iterations before gettting to baseline clinician error rate
                 max_deescalation = abx_settings[sweep[0]] - abx_settings_perturbed[sweep[0]] + 1
                 max_deescaltion_miss_rate = ip_rates[len(ip_rates)-2]
+                settings_to_plot = {key : abx_settings_perturbed[key] for key in abx_settings_perturbed} 
+                settings_to_plot[sweep[0]] += 1
+                settings_to_plot[sweep[1]] -= 1
+                plot_histogram(settings_to_plot, axes[k+1][0])
+                axes[k+1][0].set_title("Optmized Allocation Fewer %s" % sweep[0].replace('_', ' & '))
+                axes[k+1][0].set_xlabel('Number of Allocations')
+                axes[k+1][0].set_ylabel('')
                 print(max_deescalation)
+                d_rate = float(abx_settings[sweep[0]] - (abx_settings_perturbed[sweep[0]] + 1))/abx_settings[sweep[0]]
+                with open(f_name_missrates, 'a') as w:
+                    w.write("Miss rate of %.2f achieve with %.2f fewer %s\n" % ((max_deescaltion_miss_rate)*100,
+                                                                                d_rate*100,
+                                                                                sweep[0].replace("_", ' & ')))
             # if abx_settings_perturbed == abx_settings:
             #     clin_iter = iter_ # save point on x axis for clinician performance
         if max_deescalation is None:
@@ -593,23 +688,21 @@ def plot_select_sweeps():
 
         deescalations = [i for i in range(len(random_rates))]
         deescalations.reverse()
-        ax[k].plot(deescalations, ip_rates, label='Optimized Allocation', linewidth=2.0)
-        ax[k].plot(deescalations, clin_rates, label='Clinician Allocation', linewidth=2.0)
-        ax[k].plot(deescalations, random_rates, label='Random Allocation', linewidth=2.0)
-        ax[k].plot(deescalations, [baseline_clin_miss_rate for c in range(len(random_rates))], linestyle='--', color='black',
-                   label='Clinician Real World Allocation')
-        ax[k].invert_xaxis()
-        ax[k].set_title("Replacing %s with %s" % (sweep[0], sweep[1]))
-        ax[k].set_xlabel("Number of %s Allocated" % sweep[0])
-        ax[k].set_ylabel("Miss Rate")
-        ax[k].set_ylim((0.10, 0.33))
+        axes[k+1][1].plot(deescalations, ip_rates, label='Optimized', linewidth=2.0)
+        axes[k+1][1].plot(deescalations, clin_rates, label='Clinician', linewidth=2.0)
+        axes[k+1][1].plot(deescalations, random_rates, label='Random', linewidth=2.0)
+        axes[k+1][1].plot(deescalations, [baseline_clin_miss_rate for c in range(len(random_rates))], linestyle='--', color='black')
+        axes[k+1][1].invert_xaxis()
+        axes[k+1][1].set_title("Replacing %s with %s" % (sweep[0].replace("_", ' & '), sweep[1]))
+        axes[k+1][1].set_xlabel("Number of %s Allocated" % sweep[0].replace("_", ' & '))
+        axes[k+1][1].set_ylabel("Miss Rate")
+        axes[k+1][1].set_ylim((0.10, 0.40))
         print("Max Re-allocations of %s to %s: %s" % (sweep[0], sweep[1], str(max_deescalation)))
-        ax[k].legend(loc='upper left')
+        if k == 0:
+            axes[k+1][1].legend(loc='upper left', fontsize='small')
+        
 
-    plt.savefig('broad_to_narrow_sweep.png')
-
-    ## TODO: plot miss rates themselves (not relative reduction in miss rate and confirm
-    # that clinician miss rate is monotonically decreasing )
+    plt.savefig('select_sweeps.png')
 
 def test_waterfall():
     abx_settings = {"a" : 2,
@@ -674,30 +767,62 @@ def test_waterfall():
 def plot_distribution_of_allocated_abx():
     """ Bar plots of allocated abx """
     df = pd.DataFrame()
-    abx_settings = {
-            "V & M" : 16,
-            "V & Z" :  153,
-            "V & C4" : 23,
-            "Z" : 102,
-            "V & C3" : 31,
-            "M" : 9,
-            "C4" : 14,
-            "C3" : 404,
-            "Cipro" : 8,
-            "C1" : 8,
-            "V" : 13         
-            }
-    df['Antibiotic'] = [a for a in abx_settings]
-    df['Count'] = [abx_settings[a] for a in abx_settings]
+    abx_settings = {"Vancomycin" : 13,
+                "Ampicillin" : 0,
+                "Cefazolin" : 8,
+                "Ceftriaxone" : 404,
+                "Cefepime" : 14,
+                "Zosyn" : 102,
+                "Ciprofloxacin" : 8,
+                "Meropenem" : 9,
+                "Vancomycin_Meropenem" : 9,
+                "Vancomycin_Zosyn" :  149,
+                "Vancomycin_Cefepime" : 23,
+                "Vancomycin_Ceftriaxone" : 31
+                }
 
-    fig, ax = plt.subplots(1, 1, figsize=(16,8))
-    ax = sns.barplot(x="Antibiotic", y="Count", data=df, palette=sns.color_palette())
-    ax.set_title('Distribution of Selected Antibiotics 2019')
-    ax.set_xlabel('')
-    ax.set_ylabel('')
-    # plt.xticks(rotation=45)
-    # plt.show()
-    plt.savefig('abx_distribution.png')
+    df_predictions = load_predictions()
+    df_drugs = get_clinician_prescribing_patterns()
+    opt = AbxDecisionMaker(df_predictions, df_drugs, abx_settings)
+
+    opt.df = (opt.df
+        .assign(was_covered_dr=opt.df.apply(lambda x: opt.compute_was_covered(x), axis=1))
+    )
+
+    # Get counts
+    df_final = (opt.df
+        .groupby('med_description')
+        .agg(num_distinct_csns=('pat_enc_csn_id_coded', 'nunique'),
+             num_times_covered_by_dr=('was_covered_dr', 'sum'))
+        .reset_index()
+        .assign(med_description=lambda x: [m.replace('_', ' & ') + " [%s/%s]" % (nc, nd) 
+                                           for m, nd, nc in zip(x.med_description,
+                                                                x.num_distinct_csns,
+                                                                x.num_times_covered_by_dr) ])
+    )
+
+
+    fig, ax = plt.subplots(1, 1, figsize=(12, 12))
+    df_final = df_final.sort_values('num_distinct_csns', ascending=False)
+    sns.barplot(x="num_distinct_csns", y="med_description", ci=None, data=df_final, ax=ax, color='red' )
+    sns.barplot(x="num_times_covered_by_dr", y="med_description", ci=None, data=df_final, ax=ax, color='blue')
+    ax.set_ylabel("")
+    ax.set_xlabel("Number of Allocations")
+    ax.set_title("Clinician Antibiotic Selections and Fraction of Patients Covered")
+    # ax.set_xlim((0, 550))
+    # Save Figure
+    # plt.gcf().subplots_adjust(left=0.25)
+    # plt.savefig('abx_distribution.png')
+    plt.show()
+
+    # Save Miss Rates For Each antibiotic
+    fname = 'clinicians_miss_rates_by_abx.csv'
+    df_miss_rates = (df_final
+        .assign(num_misses=lambda x: [csn - n_c for csn, n_c in zip(x.num_distinct_csns,
+                                                                    x.num_times_covered_by_dr)])
+    )  
+
+    df_miss_rates.to_csv(fname, index=None)
 
 
 if __name__ == '__main__':
@@ -710,5 +835,6 @@ if __name__ == '__main__':
     #     w.write("Relative Reduction Miss Rate Optimized to Random:%s\n" % lr)
     #     w.write("Relative Reduction Miss Rate Optimized to Clinician:%s\n" % lc)
 
-    # plot_distribution_of_allocated_abx()
     plot_select_sweeps()
+    # plot_distribution_of_allocated_abx()
+    # bootstrap_miss_rates()
