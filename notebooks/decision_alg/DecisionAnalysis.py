@@ -3,7 +3,7 @@ import matplotlib.pyplot as plt
 import matplotlib.gridspec as gridspec
 import seaborn as sns
 from tqdm import tqdm
-sns.set(style='white', font_scale=2.0)
+sns.set(style='white', font_scale=1.5)
 import numpy as np
 from pulp import *
 import os, glob
@@ -98,6 +98,7 @@ class AbxDecisionMaker():
         )
 
         self.df_for_reset = self.df.copy()
+        self.abx_settings_for_reset = {key : self.abx_settings[key] for key in self.abx_settings} # deep copy
         self.n = len(df_drugs)
 
 
@@ -106,6 +107,9 @@ class AbxDecisionMaker():
 
     def reset_df(self):
         self.df = self.df_for_reset.copy()
+
+    def reset_abx_settings(self):
+        self.abx_settings = {key : self.abx_settings_for_reset[key] for key in self.abx_settings_for_reset}
 
     def replace_one(self, to_replace, replace_with):
         """ Randomly takes one allocation of to_replace from the clinician and random
@@ -155,32 +159,6 @@ class AbxDecisionMaker():
             med_description = x.IP_med_description
         
         return x[med_description]
-        # if med_description == "CEFTRIAXONE":
-        #     return x.Ceftriaxone
-        # elif med_description == "PIPERACILLIN-TAZOBACTAM VANCOMYCIN":
-        #     return x.Vancomycin_Zosyn
-        # elif med_description == "PIPERACILLIN-TAZOBACTAM":
-        #     return x.Zosyn
-        # elif med_description == "CEFTRIAXONE VANCOMYCIN":
-        #     return x.Vancomycin_Ceftriaxone
-        # elif med_description == "CEFEPIME VANCOMYCIN":
-        #     return x.Vancomycin_Cefepime
-        # elif med_description == "CEFEPIME":
-        #     return x.Cefepime
-        # elif med_description == "VANCOMYCIN":
-        #     return x.Vancomycin
-        # elif med_description == "MEROPENEM":
-        #     return x.Meropenem
-        # elif med_description == "MEROPENEM VANCOMYCIN":
-        #     return x.Vancomycin_Meropenem
-        # elif med_description == "CEFAZOLIN":
-        #     return x.Cefazolin
-        # elif med_description == "CIPROFLOXACIN":
-        #     return x.Ciprofloxacin
-        # elif med_description == "AMPICILLIN":
-        #     return x.Ampicillin
-        # else:
-        #     return "Not in abx options"
 
     def get_coverage_rates(self, df=None):
         """
@@ -253,7 +231,204 @@ class AbxDecisionMaker():
             abx_decisions.append(abx_decision)
         self.df['IP_med_description'] = abx_decisions
 
+def perform_sweep(opt, abx_1, abx_2, ax, fname, legend=True, append=True):
+    """
+    Performs one antibiotic sweep where allocations of abx_1 are iterativelly converted to
+    allocations of abx_2.  Creates plots of said sweep, and saves a text file indicating
+    the point on the sweep where the clinician threshold is met (fraction of abx_1 you can convert
+    to abx_2) and maintatin clinician miss rate
+
+    Parameters
+    ----------
+    opt : AbxDecisionMaker object
+    abx_1 : abx to use less of
+    abx_2 : abx to use more of
+    ax : matplotlib axes to plot on
+    """
+    if append:
+        char_ = 'a'
+    else:
+        char_ = 'w'
+    opt.reset_df()
+    opt.reset_abx_settings()
+    abx_1_start_setting = opt.abx_settings[abx_1]
+    abx_settings_perturbed = {key : opt.abx_settings[key] for key in opt.abx_settings} #deep copy
+    reached_clin_error_rate = False
+    print("Performing %s to %s sweep" % (abx_1, abx_2))
+    random_rates, clin_rates, ip_rates = [], [], []
+    c_from_rs, ip_from_rs = [], []
+
+    opt.set_abx_settings(abx_settings_perturbed)
+    opt.solve_and_assign()
+    r, c, i = opt.get_coverage_rates()
+    baseline_clin_miss_rate = 1-c
+    random_rates.append(1-r)
+    ip_rates.append(1-i)
+    clin_rates.append(1-c)
+
+    for iter_ in tqdm(range(abx_1_start_setting)):
+        abx_settings_perturbed[abx_1] -= 1
+        abx_settings_perturbed[abx_2] += 1
+        opt.set_abx_settings(abx_settings_perturbed)
+        opt.replace_one(abx_1, abx_2)
+        opt.solve_and_assign()
+        r, c, i = opt.get_coverage_rates()
+
+        random_rates.append(1-r)
+        ip_rates.append(1-i)
+        clin_rates.append(1-c)
+
+        if 1-i > baseline_clin_miss_rate and not reached_clin_error_rate:
+            # Number of iterations before gettting to baseline clinician error rate
+            max_deescalation = iter_
+            max_deescaltion_miss_rate = ip_rates[-2]
+            settings_to_plot = {key : abx_settings_perturbed[key] for key in abx_settings_perturbed} 
+            settings_to_plot[abx_1] += 1
+            settings_to_plot[abx_2] -= 1
+            d_rate = float(iter_)/abx_1_start_setting
+            with open(fname, char_) as w:
+                w.write("Miss rate of %.2f achieved with %.2f percent fewer %s\n" % ((max_deescaltion_miss_rate)*100,
+                                                                              d_rate*100,
+                                                                              abx_1.replace("_", ' & ')))
+            miss_rate_to_return = max_deescaltion_miss_rate*100
+            reduction_rate = d_rate * 100
+            reached_clin_error_rate = True
+
+
+    if reached_clin_error_rate == False:
+        settings_to_plot = {key : abx_settings_perturbed[key] for key in abx_settings_perturbed}
+        with open(fname, char_) as w:
+                w.write("Miss rate of %.2f achieved with %.2f percent fewer %s\n" % (ip_rates[-1]*100,
+                                                                              100,
+                                                                              abx_1.replace("_", ' & ')))
+        miss_rate_to_return = ip_rates[-1]*100
+        reduction_rate = 100
+        max_deescalation = abx_1_start_setting
+        max_deescaltion_miss_rate = ip_rates[-1]
+
+    deescalations = [i for i in range(len(random_rates))]
+    deescalations.reverse()
+    ax.plot(deescalations, ip_rates, label='Optimized Allocation', linewidth=2.0)
+    ax.plot(deescalations, random_rates, label='Random Allocation', linewidth=2.0)
+    ax.plot(deescalations, [baseline_clin_miss_rate for c in range(len(random_rates))],
+              linestyle='--', color='black', label='Observed Clinician Allocation')
+    if reached_clin_error_rate == False:
+        ax.plot(max_deescalation - abx_1_start_setting, max_deescaltion_miss_rate, marker='x',
+                markersize=15, color='red', linewidth=2.0)
+    else:
+        ax.plot(abx_1_start_setting - max_deescalation, max_deescaltion_miss_rate, marker='x',
+                markersize=15, color='red', linewidth=2.0)
+    ax.invert_xaxis()
+    ax.set_title("%s to %s" % (abx_1.replace("_", ' & ').replace('Zosyn', 'Pip/Tazo'),
+                 abx_2.replace("_", ' & ').replace('Zosyn', 'Pip/Tazo')))#, y=1.04)
+    ax.set_xlabel("# %s Allocated" % abx_1.replace("_", ' & ').replace('Zosyn', 'Pip/Tazo'))
+    ax.set_ylabel("Miss Rate")
+    ax.set_ylim((0.10, 0.40))
+
+    if legend:
+        ax.legend(loc='upper left', fontsize='small')
+
+    return settings_to_plot, miss_rate_to_return, reduction_rate
+
+def plot_histogram(settings, ax, miss_rate=None, reduction_rate=None, abx1=None, abx2=None):
+    """
+    Given antibiotic settings, plot distribution as bar plot
+    """
+
+    if abx1 == None:
+        text_offset = 8
+        xlim_min = 430
+    else:
+        text_offset = 17
+        xlim_min = 460
+
+    df_settings = pd.DataFrame(data={
+        'med' : [key.replace("_", " & ").replace('Zosyn', 'Pip/Tazo') for key in settings],
+        'value' : [value for key, value in settings.items()]
+    })
+    ax = sns.barplot(x="value", y="med", ci=None, data=df_settings, ax=ax, palette="deep")
+    max_value = np.max([value for key, value in settings.items()])
+    x_max = max(xlim_min, max_value+50)
+    ax.set_xlim([0, x_max])
+    ax.set_ylabel('')
+    ax.set_xlabel('')
+
     
+    for i, p in enumerate(ax.patches):
+        ax.text(text_offset+p.get_width(), p.get_y()+0.55*p.get_height(),
+                str(p.get_width()),
+                ha='center', va='center',
+                fontsize='x-small')
+        if i == 6 and abx2 not in ('Vancomycin', 'Cefepime'):
+            y_center = p.get_y()
+        
+        if i == 8 and abx2 in ('Vancomycin', 'Cefepime'):
+            y_center = p.get_y()
+
+
+            
+    if miss_rate is not None and reduction_rate is not None:
+        if '&' in abx1:
+            text = "Miss rate {miss_rate}% with\n{red_rate}% fewer {abx}".format(
+                miss_rate=str(round(miss_rate, 1)),
+                red_rate=str(round(reduction_rate, 1)),
+                abx=abx1
+            )
+
+        else:
+            text = "Miss rate {miss_rate}% with {red_rate}% fewer {abx}".format(
+                miss_rate=str(round(miss_rate, 1)),
+                red_rate=str(round(reduction_rate, 1)),
+                abx=abx1
+            )
+    else:
+        text = "Miss rate {miss_rate}% in observed clinician allocation".format(
+                miss_rate=15.7
+                )
+    ax.text(x_max/2., y_center, text, ha="center", va="center", fontsize='small')
+
+
+
+
+def plot_sweeps(opt):
+    """ Perform and plot abx sweeps """
+    ordered_abx = ['Vancomycin_Meropenem',
+                   'Vancomycin_Cefepime',
+                   'Vancomycin_Zosyn',
+                   'Zosyn',
+                   'Vancomycin_Ceftriaxone',
+                   'Meropenem',
+                   'Cefepime',
+                   'Ceftriaxone',
+                   'Ciprofloxacin',
+                   'Cefazolin',
+                   'Ampicillin',
+                   'Vancomycin']
+    
+    # For each abx, get a set of narrower-spectrum antibiotics
+    abx_sets = {}
+    for i, abx in enumerate(ordered_abx):
+        abx_sets[abx] = [a for j, a in enumerate(ordered_abx) if j > i]
+    
+    base_path = "./sweep_plots/%s/"
+    for j, abx in enumerate(abx_sets):
+        path = base_path % abx
+        os.makedirs(path, exist_ok=True)
+        for i, abx_2 in enumerate(abx_sets[abx]):
+            fig, ax = plt.subplots(1, 2, figsize=(16, 8))
+            plt.subplots_adjust(wspace=0.3, hspace=0.3)
+            fname = os.path.join(path, "%s_to_%s.txt" % (abx, abx_2))
+            settings, miss_rate, reduction_rate = perform_sweep(opt,
+                                                                abx_1=abx,
+                                                                abx_2=abx_2,
+                                                                ax=ax[1],
+                                                                fname=fname,
+                                                                legend=True,
+                                                                append=False)
+            plot_histogram(settings, ax[0])
+            plt.savefig(os.path.join(path, '%s_to_%s_sweeps.png' % (abx, abx_2)),
+                        bbox_inches = "tight")
+
 def perform_abx_sweep():
     """
     Simulates antibiotic delivery sweeping through different abx prescribing contraints. 
@@ -385,8 +560,8 @@ def full_waterfall():
                     "Vancomycin_Ceftriaxone" : 0
                     }
     abx_rankings = ['Vancomycin_Meropenem',
-                    'Vancomycin_Zosyn',
                     'Vancomycin_Cefepime',
+                    'Vancomycin_Zosyn',
                     'Zosyn',
                     'Vancomycin_Ceftriaxone',
                     'Meropenem',
@@ -541,17 +716,6 @@ def bootstrap_miss_rates():
     l_r_final = "%.2f [%.2f, %.2f]" % (l_r_means, l_r_low, l_r_high)
 
     return r_miss_rate, c_miss_rate, l_miss_rate, l_r_final, l_c_final
-
-def plot_histogram(settings, ax):
-    """
-    Given antibiotic settings, plot distribution as bar plot
-    """
-    df_settings = pd.DataFrame(data={
-        'med' : [key.replace("_", " & ") for key in settings],
-        'value' : [value for key, value in settings.items()]
-    })
-    sns.barplot(x="value", y="med", ci=None, data=df_settings, ax=ax, palette="deep")
-    ax.set_xlim([0,420])
 
 def for_debugging_plot_select_sweeps(df_drugs, abx_settings):
     """ Resample df_drugs so that there exist the specified number of allocations in settings """
@@ -835,6 +999,28 @@ if __name__ == '__main__':
     #     w.write("Relative Reduction Miss Rate Optimized to Random:%s\n" % lr)
     #     w.write("Relative Reduction Miss Rate Optimized to Clinician:%s\n" % lc)
 
-    plot_select_sweeps()
+    # plot_select_sweeps()
     # plot_distribution_of_allocated_abx()
     # bootstrap_miss_rates()
+
+    abx_settings = {"Ceftriaxone" : 404,
+        "Vancomycin_Zosyn" :  149,
+        "Zosyn" : 102,
+        "Vancomycin_Ceftriaxone" : 31,
+        "Vancomycin_Cefepime" : 23,
+        "Cefepime" : 14,
+        "Vancomycin" : 13,
+        "Vancomycin_Meropenem" : 9,
+        "Meropenem" : 9,
+        "Cefazolin" : 8,
+        "Ciprofloxacin" : 8,
+        "Ampicillin" : 0,
+        }
+
+    f_name_missrates = 'individual_sweep_test.txt'
+    df_predictions = load_predictions()
+    df_drugs = get_clinician_prescribing_patterns()
+    opt = AbxDecisionMaker(df_predictions, df_drugs, abx_settings)
+    plot_sweeps(opt)
+    # perform_sweep(opt, abx_1='Vancomycin_Meropenem', abx_2='Vancomycin', ax=ax, fname=f_name_missrates, legend=True)
+    # plt.show()
